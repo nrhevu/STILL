@@ -49,7 +49,6 @@ class LatentCrossAttention(nn.Module):
         nn.init.zeros_(self.q_proj.weight)
         nn.init.zeros_(self.k_proj.weight)
         direction = torch.ones(self.dim, dtype=self.q_proj.bias.dtype)
-        direction = direction / direction.norm()
         with torch.no_grad():
             self.q_proj.bias.copy_(direction)
             self.k_proj.bias.copy_(10.0 * direction)
@@ -97,16 +96,13 @@ class PerceiverBlock(nn.Module):
         latent_positions: torch.Tensor,
         token_positions: torch.Tensor,
     ) -> torch.Tensor:
-        latents = self.cross_norm(
-            latents
-            + self.cross_attn(
-                latents,
-                kv_input,
-                latent_positions=latent_positions,
-                token_positions=token_positions,
-            )
+        latents = latents + self.cross_attn(
+            self.cross_norm(latents),
+            kv_input,
+            latent_positions=latent_positions,
+            token_positions=token_positions,
         )
-        return self.self_norm(latents + self.self_attn(latents))
+        return latents + self.self_attn(self.self_norm(latents))
 
 
 class StillLayerCompactor(nn.Module):

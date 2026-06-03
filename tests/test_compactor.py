@@ -1,6 +1,6 @@
 import torch
 
-from neural_kv.compactor import StillCompactor, StillLayerCompactor
+from neural_kv.compactor import PerceiverBlock, StillCompactor, StillLayerCompactor
 
 
 def test_layer_compactor_shapes_and_initial_copy_bias() -> None:
@@ -11,6 +11,23 @@ def test_layer_compactor_shapes_and_initial_copy_bias() -> None:
     assert compact_keys.shape == (2, 3, 4, 8)
     assert compact_values.shape == (2, 3, 4, 8)
     assert beta.shape == (2, 3, 4)
+
+
+def test_perceiver_identity_path_preserves_selected_kv_magnitude() -> None:
+    block = PerceiverBlock(dim=4, rope_theta=10000.0, active_identity_path=True)
+    latents = torch.zeros(1, 1, 4)
+    kv_input = torch.tensor([[[2.0, 4.0, 6.0, 8.0], [10.0, 12.0, 14.0, 16.0]]])
+    positions = torch.zeros(1, dtype=torch.long)
+    token_positions = torch.zeros(2, dtype=torch.long)
+
+    output = block(
+        latents,
+        kv_input,
+        latent_positions=positions,
+        token_positions=token_positions,
+    )
+
+    assert torch.allclose(output, kv_input.mean(dim=1, keepdim=True), atol=1e-5)
 
 
 def test_full_compactor_returns_cache() -> None:
