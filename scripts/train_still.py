@@ -65,6 +65,11 @@ def parse_args() -> argparse.Namespace:
         help="Use thinking-enabled chat formatting for training targets.",
     )
     parser.add_argument(
+        "--eval-enable-thinking",
+        action="store_true",
+        help="Use thinking-enabled chat formatting during evaluation.",
+    )
+    parser.add_argument(
         "--score-mode",
         choices=["choice_loglik", "letter", "generation"],
         default="letter",
@@ -116,6 +121,7 @@ def save_checkpoint(
             "eval_max_new_tokens": args.eval_max_new_tokens,
             "use_chat_template": not args.no_chat_template,
             "enable_thinking": args.enable_thinking,
+            "eval_enable_thinking": args.eval_enable_thinking,
             "state_dict": compactor.state_dict(),
             "metrics": metrics,
         },
@@ -310,7 +316,7 @@ def main() -> None:
                         device=device,
                         score_mode=args.score_mode,
                         use_chat_template=not args.no_chat_template,
-                        enable_thinking=args.enable_thinking,
+                        enable_thinking=args.eval_enable_thinking,
                         max_new_tokens=args.eval_max_new_tokens,
                     )
                 )
@@ -339,7 +345,7 @@ def main() -> None:
                 device=device,
             score_mode=args.score_mode,
             use_chat_template=not args.no_chat_template,
-            enable_thinking=args.enable_thinking,
+            enable_thinking=args.eval_enable_thinking,
             max_new_tokens=args.eval_max_new_tokens,
         )
         )
