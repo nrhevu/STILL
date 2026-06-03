@@ -40,6 +40,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--learning-rate", type=float, default=1e-4)
     parser.add_argument("--kl-weight", type=float, default=1.0)
     parser.add_argument("--ce-weight", type=float, default=0.1)
+    parser.add_argument("--target-mode", choices=["choice_text", "letter"], default="letter")
+    parser.add_argument(
+        "--score-mode",
+        choices=["choice_loglik", "letter"],
+        default="letter",
+    )
+    parser.add_argument(
+        "--no-chat-template",
+        action="store_true",
+        help="Tokenize context and prompt as raw text instead of chat-template system/user turns.",
+    )
     parser.add_argument("--latent-dropout", type=float, default=0.0)
     parser.add_argument("--eval-every", type=int, default=0)
     parser.add_argument("--eval-limit", type=int, default=32)
@@ -66,7 +77,12 @@ def save_checkpoint(
             "step": step,
             "model": args.model,
             "num_latents": args.num_latents,
+            "num_blocks": args.num_blocks,
             "context_length": args.context_length,
+            "latent_dropout": args.latent_dropout,
+            "target_mode": args.target_mode,
+            "score_mode": args.score_mode,
+            "use_chat_template": not args.no_chat_template,
             "state_dict": compactor.state_dict(),
             "metrics": metrics,
         },
@@ -83,6 +99,8 @@ def evaluate(
     rows: list[dict[str, object]],
     context_length: int,
     device: str,
+    score_mode: str,
+    use_chat_template: bool,
 ) -> dict[str, float]:
     if not rows:
         return {"compact_accuracy": 0.0, "full_accuracy": 0.0}
@@ -98,6 +116,8 @@ def evaluate(
             tokenizer=tokenizer,
             row=row,
             device=device,
+            score_mode=score_mode,
+            use_chat_template=use_chat_template,
         )
         full_pred, _ = score_mcq_letters(
             model=model,
@@ -106,6 +126,8 @@ def evaluate(
             context_length=context_length,
             device=device,
             compactor=None,
+            score_mode=score_mode,
+            use_chat_template=use_chat_template,
         )
         compact_pred, compact_meta = score_mcq_letters(
             model=model,
@@ -114,6 +136,8 @@ def evaluate(
             context_length=context_length,
             device=device,
             compactor=compactor,
+            score_mode=score_mode,
+            use_chat_template=use_chat_template,
         )
         no_context_correct += int(no_context_pred == gold)
         full_correct += int(full_pred == gold)
@@ -125,6 +149,7 @@ def evaluate(
         "full_accuracy": full_correct / len(rows),
         "no_context_accuracy": no_context_correct / len(rows),
         "mean_compression": compression_sum / len(rows),
+        "used_chat_template": float(use_chat_template),
     }
 
 
@@ -177,6 +202,8 @@ def main() -> None:
                 device=device,
                 kl_weight=args.kl_weight,
                 ce_weight=args.ce_weight,
+                target_mode=args.target_mode,
+                use_chat_template=not args.no_chat_template,
             )
             loss.backward()
             torch.nn.utils.clip_grad_norm_(compactor.parameters(), 1.0)
@@ -192,6 +219,8 @@ def main() -> None:
                         rows=eval_rows,
                         context_length=args.context_length,
                         device=device,
+                        score_mode=args.score_mode,
+                        use_chat_template=not args.no_chat_template,
                     )
                 )
             metrics_file.write(json.dumps(last_metrics, sort_keys=True) + "\n")
@@ -217,6 +246,8 @@ def main() -> None:
                 rows=eval_rows,
                 context_length=args.context_length,
                 device=device,
+                score_mode=args.score_mode,
+                use_chat_template=not args.no_chat_template,
             )
         )
     save_checkpoint(

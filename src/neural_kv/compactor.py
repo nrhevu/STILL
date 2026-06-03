@@ -194,6 +194,7 @@ class StillLayerCompactor(nn.Module):
         compact_keys = self.key_head(latents)
         compact_values = self.value_head(latents)
         beta = self.beta_head(latents).squeeze(-1)
+        beta = beta + math.log(max(seq_len / self.num_latents, 1e-6))
         compact_keys = apply_rope(compact_keys, latent_positions, theta=self.rope_theta)
 
         compact_keys = compact_keys.reshape(batch, heads, self.num_latents, head_dim).to(dtype)

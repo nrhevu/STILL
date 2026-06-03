@@ -6,10 +6,10 @@ import torch
 
 
 def rotate_half(x: torch.Tensor) -> torch.Tensor:
-    """Apply the standard rotary half-rotation on the final dimension."""
-    even = x[..., ::2]
-    odd = x[..., 1::2]
-    return torch.stack((-odd, even), dim=-1).flatten(start_dim=-2)
+    """Apply the Llama/Qwen split-half rotary transform on the final dimension."""
+    left = x[..., : x.shape[-1] // 2]
+    right = x[..., x.shape[-1] // 2 :]
+    return torch.cat((-right, left), dim=-1)
 
 
 def rope_frequencies(dim: int, theta: float, device: torch.device) -> torch.Tensor:
@@ -26,7 +26,7 @@ def rope_cos_sin(
     """Build cosine and sine tables for arbitrary absolute positions."""
     inv_freq = rope_frequencies(dim, theta, positions.device)
     freqs = torch.outer(positions.to(torch.float32), inv_freq)
-    emb = torch.repeat_interleave(freqs, 2, dim=-1)
+    emb = torch.cat((freqs, freqs), dim=-1)
     return emb.cos(), emb.sin()
 
 
