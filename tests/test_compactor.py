@@ -75,3 +75,39 @@ def test_full_compactor_returns_cache() -> None:
     assert cache.num_layers == 2
     assert cache.num_tokens == 4
     assert cache.metadata["source_tokens"] == 12
+
+
+def test_grouped_compactor_reuses_depth_groups() -> None:
+    compactor = StillCompactor(
+        num_hidden_layers=4,
+        head_dim=8,
+        num_latents=4,
+        rope_theta=10000.0,
+        layer_compactor_groups=2,
+    )
+    past = tuple((torch.randn(1, 2, 12, 8), torch.randn(1, 2, 12, 8)) for _ in range(4))
+
+    cache = compactor(past)
+
+    assert len(compactor.layers) == 2
+    assert compactor.num_hidden_layers == 4
+    assert cache.num_layers == 4
+    assert compactor._layer_group_index(0) == 0
+    assert compactor._layer_group_index(1) == 0
+    assert compactor._layer_group_index(2) == 1
+    assert compactor._layer_group_index(3) == 1
+
+
+def test_grouped_compactor_rejects_too_many_groups() -> None:
+    try:
+        StillCompactor(
+            num_hidden_layers=2,
+            head_dim=8,
+            num_latents=4,
+            rope_theta=10000.0,
+            layer_compactor_groups=3,
+        )
+    except ValueError as exc:
+        assert "cannot exceed" in str(exc)
+    else:
+        raise AssertionError("expected too many layer compactor groups to fail")

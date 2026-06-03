@@ -217,9 +217,17 @@ class StillCompactor(nn.Module):
         num_blocks: int = 2,
         latent_dropout: float = 0.0,
         beta_base: str = "log_compression",
+        layer_compactor_groups: int = 0,
     ) -> None:
         super().__init__()
+        self.num_hidden_layers = int(num_hidden_layers)
         self.num_latents = int(num_latents)
+        groups = int(layer_compactor_groups or self.num_hidden_layers)
+        if groups <= 0:
+            raise ValueError("layer_compactor_groups must be positive or 0 for per-layer")
+        if groups > self.num_hidden_layers:
+            raise ValueError("layer_compactor_groups cannot exceed num_hidden_layers")
+        self.layer_compactor_groups = groups
         self.beta_base = beta_base
         self.layers = nn.ModuleList(
             [
@@ -231,7 +239,7 @@ class StillCompactor(nn.Module):
                     latent_dropout=latent_dropout,
                     beta_base=beta_base,
                 )
-                for _ in range(num_hidden_layers)
+                for _ in range(groups)
             ]
         )
 
@@ -244,6 +252,7 @@ class StillCompactor(nn.Module):
         num_blocks: int = 2,
         latent_dropout: float = 0.0,
         beta_base: str = "log_compression",
+        layer_compactor_groups: int = 0,
     ) -> StillCompactor:
         head_dim = getattr(config, "head_dim", config.hidden_size // config.num_attention_heads)
         rope_theta = float(getattr(config, "rope_theta", 10000.0))
@@ -255,7 +264,13 @@ class StillCompactor(nn.Module):
             num_blocks=num_blocks,
             latent_dropout=latent_dropout,
             beta_base=beta_base,
+            layer_compactor_groups=layer_compactor_groups,
         )
+
+    def _layer_group_index(self, layer_index: int) -> int:
+        if self.layer_compactor_groups == self.num_hidden_layers:
+            return layer_index
+        return (layer_index * self.layer_compactor_groups) // self.num_hidden_layers
 
     def forward(
         self,
@@ -264,16 +279,15 @@ class StillCompactor(nn.Module):
         metadata: dict[str, object] | None = None,
     ) -> CompactKVCache:
         normalized = normalize_past_key_values(past_key_values)
-        if len(normalized) != len(self.layers):
-            raise ValueError(f"expected {len(self.layers)} cache layers, got {len(normalized)}")
+        if len(normalized) != self.num_hidden_layers:
+            raise ValueError(
+                f"expected {self.num_hidden_layers} cache layers, got {len(normalized)}"
+            )
         keys: list[torch.Tensor] = []
         values: list[torch.Tensor] = []
         biases: list[torch.Tensor] = []
-        for layer_compactor, (layer_keys, layer_values) in zip(
-            self.layers,
-            normalized,
-            strict=True,
-        ):
+        for layer_index, (layer_keys, layer_values) in enumerate(normalized):
+            layer_compactor = self.layers[self._layer_group_index(layer_index)]
             compact_k, compact_v, beta = layer_compactor(layer_keys, layer_values)
             keys.append(compact_k)
             values.append(compact_v)

@@ -58,6 +58,7 @@ def main() -> None:
     context_length = int(checkpoint["context_length"])
     num_latents = int(checkpoint["num_latents"])
     num_blocks = int(checkpoint.get("num_blocks", 2))
+    layer_compactor_groups = int(checkpoint.get("layer_compactor_groups", 0))
     beta_base = str(checkpoint.get("beta_base", "log_compression"))
 
     device = resolve_device(args.device)
@@ -74,6 +75,7 @@ def main() -> None:
         num_latents=num_latents,
         num_blocks=num_blocks,
         beta_base=beta_base,
+        layer_compactor_groups=layer_compactor_groups,
     ).to(device)
     compactor.load_state_dict(checkpoint["state_dict"])
     compactor.eval()

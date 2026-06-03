@@ -43,6 +43,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--num-latents", type=int, default=16)
     parser.add_argument("--num-blocks", type=int, default=2)
     parser.add_argument(
+        "--layer-compactor-groups",
+        type=int,
+        default=0,
+        help="Number of shared depth compactor groups; 0 keeps one compactor per layer.",
+    )
+    parser.add_argument(
         "--beta-base",
         choices=["zero", "log_compression"],
         default="zero",
@@ -142,6 +148,7 @@ def save_checkpoint(
             "model": args.model,
             "num_latents": args.num_latents,
             "num_blocks": args.num_blocks,
+            "layer_compactor_groups": args.layer_compactor_groups,
             "beta_base": args.beta_base,
             "context_length": args.context_length,
             "batch_size": args.batch_size,
@@ -294,6 +301,7 @@ def main() -> None:
         num_blocks=args.num_blocks,
         latent_dropout=args.latent_dropout,
         beta_base=args.beta_base,
+        layer_compactor_groups=args.layer_compactor_groups,
     ).to(device)
     initial_step = 0
     if args.init_checkpoint:
@@ -306,6 +314,12 @@ def main() -> None:
             raise ValueError("--init-checkpoint num_latents does not match --num-latents")
         if int(checkpoint.get("num_blocks", -1)) != args.num_blocks:
             raise ValueError("--init-checkpoint num_blocks does not match --num-blocks")
+        checkpoint_groups = int(checkpoint.get("layer_compactor_groups", 0))
+        if checkpoint_groups != args.layer_compactor_groups:
+            raise ValueError(
+                f"--init-checkpoint layer_compactor_groups {checkpoint_groups} "
+                f"does not match --layer-compactor-groups {args.layer_compactor_groups}"
+            )
         checkpoint_beta_base = str(checkpoint.get("beta_base", "log_compression"))
         if checkpoint_beta_base != args.beta_base:
             raise ValueError(
