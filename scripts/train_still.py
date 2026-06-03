@@ -35,6 +35,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--train-file", default="data/mcq/train.jsonl")
     parser.add_argument("--eval-file", default="data/mcq/validation.jsonl")
     parser.add_argument("--output-dir", default="checkpoints/smoke")
+    parser.add_argument(
+        "--init-checkpoint",
+        default="",
+        help="Optional train_still.py checkpoint to initialize the compactor from.",
+    )
     parser.add_argument("--num-latents", type=int, default=16)
     parser.add_argument("--num-blocks", type=int, default=2)
     parser.add_argument("--context-length", type=int, default=256)
@@ -119,6 +124,7 @@ def save_checkpoint(
             "target_mode": args.target_mode,
             "score_mode": args.score_mode,
             "eval_max_new_tokens": args.eval_max_new_tokens,
+            "init_checkpoint": args.init_checkpoint,
             "use_chat_template": not args.no_chat_template,
             "enable_thinking": args.enable_thinking,
             "eval_enable_thinking": args.eval_enable_thinking,
@@ -257,6 +263,21 @@ def main() -> None:
         num_blocks=args.num_blocks,
         latent_dropout=args.latent_dropout,
     ).to(device)
+    initial_step = 0
+    if args.init_checkpoint:
+        checkpoint = torch.load(args.init_checkpoint, map_location="cpu", weights_only=False)
+        if str(checkpoint.get("model")) != args.model:
+            raise ValueError(
+                f"--init-checkpoint model {checkpoint.get('model')!r} does not match {args.model!r}"
+            )
+        if int(checkpoint.get("num_latents", -1)) != args.num_latents:
+            raise ValueError("--init-checkpoint num_latents does not match --num-latents")
+        if int(checkpoint.get("num_blocks", -1)) != args.num_blocks:
+            raise ValueError("--init-checkpoint num_blocks does not match --num-blocks")
+        if int(checkpoint.get("context_length", -1)) != args.context_length:
+            raise ValueError("--init-checkpoint context_length does not match --context-length")
+        compactor.load_state_dict(checkpoint["state_dict"])
+        initial_step = int(checkpoint.get("step", 0))
     compactor.train()
     optimizer = AdamW(compactor.parameters(), lr=args.learning_rate)
     output_dir = Path(args.output_dir)
@@ -272,7 +293,8 @@ def main() -> None:
     start_time = time.perf_counter()
     last_metrics: dict[str, float] = {}
     with metrics_path.open("w", encoding="utf-8") as metrics_file:
-        for step, row_indices in enumerate(tqdm(schedule, desc="training"), start=1):
+        for local_step, row_indices in enumerate(tqdm(schedule, desc="training"), start=1):
+            step = initial_step + local_step
             optimizer.zero_grad(set_to_none=True)
             metric_sums: dict[str, float] = {}
             loss_sum = 0.0
@@ -349,11 +371,12 @@ def main() -> None:
             max_new_tokens=args.eval_max_new_tokens,
         )
         )
+    final_step = initial_step + args.steps
     save_checkpoint(
         path=output_dir / "final.pt",
         compactor=compactor,
         args=args,
-        step=args.steps,
+        step=final_step,
         metrics=last_metrics,
     )
     with (output_dir / "summary.json").open("w", encoding="utf-8") as handle:
