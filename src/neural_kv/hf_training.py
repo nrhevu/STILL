@@ -304,6 +304,10 @@ def _letter_ids(tokenizer, *, target_prefix: str, device: str) -> list[int]:
     return ids
 
 
+def _letter_index(row: dict[str, object]) -> int:
+    return "ABCD".index(answer_letter(row))
+
+
 def _pad_chat_context_ids(
     tokenizer,
     context_ids: torch.Tensor,
@@ -510,6 +514,39 @@ def kl_and_ce_loss(
     return loss
 
 
+def _letter_choice_logits(
+    *,
+    logits: torch.Tensor,
+    prompt_len: int,
+    label_ids: list[int],
+) -> torch.Tensor:
+    return logits[:, prompt_len - 1, label_ids].float()
+
+
+def letter_kl_and_ce_loss(
+    *,
+    teacher_logits: torch.Tensor,
+    student_logits: torch.Tensor,
+    target_index: int,
+    kl_weight: float,
+    ce_weight: float,
+) -> torch.Tensor:
+    """Distill the full-cache distribution over the four MCQ answer letters."""
+    loss = student_logits.new_tensor(0.0, dtype=torch.float32)
+    if kl_weight > 0:
+        teacher_prob = torch.softmax(teacher_logits.float(), dim=-1)
+        student_log_prob = torch.log_softmax(student_logits.float(), dim=-1)
+        loss = loss + kl_weight * F.kl_div(student_log_prob, teacher_prob, reduction="batchmean")
+    if ce_weight > 0:
+        target = torch.tensor([target_index], device=student_logits.device, dtype=torch.long)
+        loss = loss + ce_weight * F.cross_entropy(
+            student_logits.float(),
+            target,
+            reduction="mean",
+        )
+    return loss
+
+
 def training_forward(
     *,
     model,
@@ -521,6 +558,7 @@ def training_forward(
     kl_weight: float,
     ce_weight: float,
     target_mode: str,
+    loss_mode: str = "token",
     use_chat_template: bool = True,
 ) -> tuple[torch.Tensor, dict[str, float]]:
     encoded = encode_mcq(
@@ -531,7 +569,12 @@ def training_forward(
         target_mode=target_mode,
         use_chat_template=use_chat_template,
     )
-    model_inputs = _continuation_inputs(encoded)
+    if loss_mode == "token":
+        model_inputs = _continuation_inputs(encoded)
+    elif loss_mode == "letter":
+        model_inputs = encoded.prompt_ids
+    else:
+        raise ValueError(f"Unsupported loss_mode: {loss_mode}")
     source_tokens = int(encoded.context_ids.shape[-1])
     prompt_len = int(encoded.prompt_ids.shape[-1])
     target_len = int(encoded.target_ids.shape[-1])
@@ -545,11 +588,23 @@ def training_forward(
             position_ids=_position_ids(source_tokens, model_inputs.shape[-1], device=device),
             use_cache=False,
         )
-        teacher_logits = answer_token_logits(
-            teacher_outputs.logits,
-            prompt_len,
-            target_len,
-        ).detach()
+        if loss_mode == "token":
+            teacher_logits = answer_token_logits(
+                teacher_outputs.logits,
+                prompt_len,
+                target_len,
+            ).detach()
+        else:
+            label_ids = _letter_ids(
+                tokenizer,
+                target_prefix=encoded.target_prefix,
+                device=device,
+            )
+            teacher_logits = _letter_choice_logits(
+                logits=teacher_outputs.logits,
+                prompt_len=prompt_len,
+                label_ids=label_ids,
+            ).detach()
 
     compact_cache = compactor(
         full_outputs.past_key_values,
@@ -570,36 +625,84 @@ def training_forward(
             position_ids=_position_ids(source_tokens, model_inputs.shape[-1], device=device),
             use_cache=False,
         )
-    student_logits = answer_token_logits(student_outputs.logits, prompt_len, target_len)
-    loss = kl_and_ce_loss(
-        teacher_logits=teacher_logits,
-        student_logits=student_logits,
-        target_ids=encoded.target_ids,
-        kl_weight=kl_weight,
-        ce_weight=ce_weight,
-    )
+    if loss_mode == "token":
+        student_logits = answer_token_logits(student_outputs.logits, prompt_len, target_len)
+        loss = kl_and_ce_loss(
+            teacher_logits=teacher_logits,
+            student_logits=student_logits,
+            target_ids=encoded.target_ids,
+            kl_weight=kl_weight,
+            ce_weight=ce_weight,
+        )
+        gold_index = None
+    else:
+        student_logits = _letter_choice_logits(
+            logits=student_outputs.logits,
+            prompt_len=prompt_len,
+            label_ids=label_ids,
+        )
+        gold_index = _letter_index(row)
+        loss = letter_kl_and_ce_loss(
+            teacher_logits=teacher_logits,
+            student_logits=student_logits,
+            target_index=gold_index,
+            kl_weight=kl_weight,
+            ce_weight=ce_weight,
+        )
     with torch.no_grad():
-        kl = kl_and_ce_loss(
-            teacher_logits=teacher_logits,
-            student_logits=student_logits,
-            target_ids=encoded.target_ids,
-            kl_weight=1.0,
-            ce_weight=0.0,
-        )
-        ce = kl_and_ce_loss(
-            teacher_logits=teacher_logits,
-            student_logits=student_logits,
-            target_ids=encoded.target_ids,
-            kl_weight=0.0,
-            ce_weight=1.0,
-        )
-    return loss, {
+        if loss_mode == "token":
+            kl = kl_and_ce_loss(
+                teacher_logits=teacher_logits,
+                student_logits=student_logits,
+                target_ids=encoded.target_ids,
+                kl_weight=1.0,
+                ce_weight=0.0,
+            )
+            ce = kl_and_ce_loss(
+                teacher_logits=teacher_logits,
+                student_logits=student_logits,
+                target_ids=encoded.target_ids,
+                kl_weight=0.0,
+                ce_weight=1.0,
+            )
+            teacher_choice = -1
+            student_choice = -1
+            gold_prob = float("nan")
+        else:
+            kl = letter_kl_and_ce_loss(
+                teacher_logits=teacher_logits,
+                student_logits=student_logits,
+                target_index=gold_index,
+                kl_weight=1.0,
+                ce_weight=0.0,
+            )
+            ce = letter_kl_and_ce_loss(
+                teacher_logits=teacher_logits,
+                student_logits=student_logits,
+                target_index=gold_index,
+                kl_weight=0.0,
+                ce_weight=1.0,
+            )
+            teacher_choice = int(torch.argmax(teacher_logits, dim=-1).item())
+            student_choice = int(torch.argmax(student_logits, dim=-1).item())
+            gold_prob = float(torch.softmax(student_logits.float(), dim=-1)[0, gold_index].cpu())
+    metrics = {
         "kl": float(kl.detach().cpu()),
         "ce": float(ce.detach().cpu()),
+        "loss_mode_letter": float(loss_mode == "letter"),
         "source_tokens": float(source_tokens),
         "compression": float(source_tokens / compact_cache.num_tokens),
         "used_chat_template": float(encoded.used_chat_template),
     }
+    if loss_mode == "letter":
+        metrics.update(
+            {
+                "teacher_choice": float(teacher_choice),
+                "student_choice": float(student_choice),
+                "student_gold_prob": gold_prob,
+            }
+        )
+    return loss, metrics
 
 
 @torch.no_grad()

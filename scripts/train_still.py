@@ -37,9 +37,21 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--num-blocks", type=int, default=2)
     parser.add_argument("--context-length", type=int, default=256)
     parser.add_argument("--steps", type=int, default=5)
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=1,
+        help="Number of rows to accumulate before each optimizer step.",
+    )
     parser.add_argument("--learning-rate", type=float, default=1e-4)
     parser.add_argument("--kl-weight", type=float, default=1.0)
     parser.add_argument("--ce-weight", type=float, default=0.1)
+    parser.add_argument(
+        "--loss-mode",
+        choices=["token", "letter"],
+        default="token",
+        help="Use token-level KL/CE or candidate-letter KL/CE for MCQ training.",
+    )
     parser.add_argument("--target-mode", choices=["choice_text", "letter"], default="letter")
     parser.add_argument(
         "--score-mode",
@@ -79,7 +91,9 @@ def save_checkpoint(
             "num_latents": args.num_latents,
             "num_blocks": args.num_blocks,
             "context_length": args.context_length,
+            "batch_size": args.batch_size,
             "latent_dropout": args.latent_dropout,
+            "loss_mode": args.loss_mode,
             "target_mode": args.target_mode,
             "score_mode": args.score_mode,
             "use_chat_template": not args.no_chat_template,
@@ -186,30 +200,47 @@ def main() -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     metrics_path = output_dir / "metrics.jsonl"
 
-    schedule = [random.randrange(len(train_rows)) for _ in range(args.steps)]
+    if args.batch_size <= 0:
+        raise ValueError("--batch-size must be positive")
+    schedule = [
+        [random.randrange(len(train_rows)) for _ in range(args.batch_size)]
+        for _ in range(args.steps)
+    ]
     start_time = time.perf_counter()
     last_metrics: dict[str, float] = {}
     with metrics_path.open("w", encoding="utf-8") as metrics_file:
-        for step, row_index in enumerate(tqdm(schedule, desc="training"), start=1):
-            row = train_rows[row_index]
+        for step, row_indices in enumerate(tqdm(schedule, desc="training"), start=1):
             optimizer.zero_grad(set_to_none=True)
-            loss, metrics = training_forward(
-                model=model,
-                tokenizer=tokenizer,
-                compactor=compactor,
-                row=row,
-                context_length=args.context_length,
-                device=device,
-                kl_weight=args.kl_weight,
-                ce_weight=args.ce_weight,
-                target_mode=args.target_mode,
-                use_chat_template=not args.no_chat_template,
-            )
-            loss.backward()
+            metric_sums: dict[str, float] = {}
+            loss_sum = 0.0
+            for row_index in row_indices:
+                row = train_rows[row_index]
+                loss, metrics = training_forward(
+                    model=model,
+                    tokenizer=tokenizer,
+                    compactor=compactor,
+                    row=row,
+                    context_length=args.context_length,
+                    device=device,
+                    kl_weight=args.kl_weight,
+                    ce_weight=args.ce_weight,
+                    target_mode=args.target_mode,
+                    loss_mode=args.loss_mode,
+                    use_chat_template=not args.no_chat_template,
+                )
+                (loss / args.batch_size).backward()
+                loss_sum += float(loss.detach().cpu())
+                for key, value in metrics.items():
+                    metric_sums[key] = metric_sums.get(key, 0.0) + float(value)
             torch.nn.utils.clip_grad_norm_(compactor.parameters(), 1.0)
             optimizer.step()
 
-            last_metrics = {"step": float(step), "loss": float(loss.detach().cpu()), **metrics}
+            last_metrics = {
+                "step": float(step),
+                "batch_size": float(args.batch_size),
+                "loss": loss_sum / args.batch_size,
+                **{key: value / args.batch_size for key, value in metric_sums.items()},
+            }
             if args.eval_every and step % args.eval_every == 0:
                 last_metrics.update(
                     evaluate(

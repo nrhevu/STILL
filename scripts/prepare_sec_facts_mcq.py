@@ -132,20 +132,22 @@ def _extract_facts(company: str, payload: dict[str, object]) -> list[Fact]:
 
 
 def _pack_document(target: Fact, facts: list[Fact], rng: random.Random, context_chars: int) -> str:
-    lines = [target.line()]
+    target_line = target.line()
+    filler_lines: list[str] = []
     shuffled = facts[:]
     rng.shuffle(shuffled)
     for fact in shuffled:
         line = fact.line()
-        if line in lines:
+        if line == target_line or line in filler_lines:
             continue
-        if sum(len(item) + 1 for item in lines) + len(line) > context_chars:
+        current_length = len(target_line) + 1 + sum(len(item) + 1 for item in filler_lines)
+        if current_length + len(line) > context_chars:
             continue
-        lines.append(line)
-        if sum(len(item) + 1 for item in lines) >= context_chars * 0.9:
+        filler_lines.append(line)
+        packed_length = len(target_line) + 1 + sum(len(item) + 1 for item in filler_lines)
+        if packed_length >= context_chars * 0.9:
             break
-    rng.shuffle(lines)
-    return "\n".join(lines)[:context_chars]
+    return "\n".join([target_line, *filler_lines])[:context_chars]
 
 
 def _make_options(

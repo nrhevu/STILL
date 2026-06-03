@@ -67,7 +67,6 @@ def _pack_context(
         passages.append(passage)
         if sum(len(item) + 2 for item in passages) >= context_chars * 0.85:
             break
-    rng.shuffle(passages)
     return "\n\n".join(passages)[:context_chars]
 
 
