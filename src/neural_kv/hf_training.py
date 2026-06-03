@@ -670,7 +670,8 @@ def training_forward(
         full_outputs.past_key_values,
         metadata={
             "source_tokens": source_tokens,
-            "target_compression": source_tokens / compactor.num_latents,
+            "target_compression": source_tokens
+            / (compactor.num_latents + getattr(compactor, "sink_tokens", 0)),
         },
     )
     with still_biases(compact_cache.biases):

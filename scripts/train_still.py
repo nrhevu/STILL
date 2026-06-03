@@ -41,6 +41,12 @@ def parse_args() -> argparse.Namespace:
         help="Optional train_still.py checkpoint to initialize the compactor from.",
     )
     parser.add_argument("--num-latents", type=int, default=16)
+    parser.add_argument(
+        "--sink-tokens",
+        type=int,
+        default=0,
+        help="Exact prefix KV tokens to prepend to the learned latent cache.",
+    )
     parser.add_argument("--num-blocks", type=int, default=2)
     parser.add_argument(
         "--layer-compactor-groups",
@@ -153,6 +159,7 @@ def save_checkpoint(
             "step": step,
             "model": args.model,
             "num_latents": args.num_latents,
+            "sink_tokens": args.sink_tokens,
             "num_blocks": args.num_blocks,
             "layer_compactor_groups": args.layer_compactor_groups,
             "beta_base": args.beta_base,
@@ -305,6 +312,7 @@ def main() -> None:
     compactor = StillCompactor.from_model_config(
         model.config,
         num_latents=args.num_latents,
+        sink_tokens=args.sink_tokens,
         num_blocks=args.num_blocks,
         latent_dropout=args.latent_dropout,
         beta_base=args.beta_base,
@@ -319,6 +327,8 @@ def main() -> None:
             )
         if int(checkpoint.get("num_latents", -1)) != args.num_latents:
             raise ValueError("--init-checkpoint num_latents does not match --num-latents")
+        if int(checkpoint.get("sink_tokens", 0)) != args.sink_tokens:
+            raise ValueError("--init-checkpoint sink_tokens does not match --sink-tokens")
         if int(checkpoint.get("num_blocks", -1)) != args.num_blocks:
             raise ValueError("--init-checkpoint num_blocks does not match --num-blocks")
         checkpoint_groups = int(checkpoint.get("layer_compactor_groups", 0))

@@ -77,6 +77,27 @@ def test_full_compactor_returns_cache() -> None:
     assert cache.metadata["source_tokens"] == 12
 
 
+def test_full_compactor_can_prepend_exact_sink_tokens() -> None:
+    compactor = StillCompactor(
+        num_hidden_layers=1,
+        head_dim=8,
+        num_latents=4,
+        rope_theta=10000.0,
+        sink_tokens=3,
+    )
+    keys = torch.randn(1, 2, 12, 8)
+    values = torch.randn(1, 2, 12, 8)
+
+    cache = compactor(((keys, values),))
+
+    assert cache.num_tokens == 7
+    assert torch.allclose(cache.keys[0][..., :3, :], keys[..., :3, :])
+    assert torch.allclose(cache.values[0][..., :3, :], values[..., :3, :])
+    assert torch.allclose(cache.biases[0][..., :3], torch.zeros_like(cache.biases[0][..., :3]))
+    assert cache.metadata["sink_tokens"] == 3
+    assert cache.metadata["latent_tokens"] == 4
+
+
 def test_grouped_compactor_reuses_depth_groups() -> None:
     compactor = StillCompactor(
         num_hidden_layers=4,

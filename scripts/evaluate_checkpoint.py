@@ -57,6 +57,7 @@ def main() -> None:
     model_name = str(checkpoint["model"])
     context_length = int(checkpoint["context_length"])
     num_latents = int(checkpoint["num_latents"])
+    sink_tokens = int(checkpoint.get("sink_tokens", 0))
     num_blocks = int(checkpoint.get("num_blocks", 2))
     layer_compactor_groups = int(checkpoint.get("layer_compactor_groups", 0))
     beta_base = str(checkpoint.get("beta_base", "log_compression"))
@@ -73,6 +74,7 @@ def main() -> None:
     compactor = StillCompactor.from_model_config(
         model.config,
         num_latents=num_latents,
+        sink_tokens=sink_tokens,
         num_blocks=num_blocks,
         beta_base=beta_base,
         layer_compactor_groups=layer_compactor_groups,

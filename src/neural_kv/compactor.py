@@ -218,10 +218,14 @@ class StillCompactor(nn.Module):
         latent_dropout: float = 0.0,
         beta_base: str = "log_compression",
         layer_compactor_groups: int = 0,
+        sink_tokens: int = 0,
     ) -> None:
         super().__init__()
         self.num_hidden_layers = int(num_hidden_layers)
         self.num_latents = int(num_latents)
+        self.sink_tokens = int(sink_tokens)
+        if self.sink_tokens < 0:
+            raise ValueError("sink_tokens must be non-negative")
         groups = int(layer_compactor_groups or self.num_hidden_layers)
         if groups <= 0:
             raise ValueError("layer_compactor_groups must be positive or 0 for per-layer")
@@ -253,6 +257,7 @@ class StillCompactor(nn.Module):
         latent_dropout: float = 0.0,
         beta_base: str = "log_compression",
         layer_compactor_groups: int = 0,
+        sink_tokens: int = 0,
     ) -> StillCompactor:
         head_dim = getattr(config, "head_dim", config.hidden_size // config.num_attention_heads)
         rope_theta = float(getattr(config, "rope_theta", 10000.0))
@@ -265,6 +270,7 @@ class StillCompactor(nn.Module):
             latent_dropout=latent_dropout,
             beta_base=beta_base,
             layer_compactor_groups=layer_compactor_groups,
+            sink_tokens=sink_tokens,
         )
 
     def _layer_group_index(self, layer_index: int) -> int:
@@ -289,13 +295,26 @@ class StillCompactor(nn.Module):
         for layer_index, (layer_keys, layer_values) in enumerate(normalized):
             layer_compactor = self.layers[self._layer_group_index(layer_index)]
             compact_k, compact_v, beta = layer_compactor(layer_keys, layer_values)
+            if self.sink_tokens:
+                sink_count = min(self.sink_tokens, int(layer_keys.shape[-2]))
+                if sink_count > 0:
+                    sink_k = layer_keys[..., :sink_count, :]
+                    sink_v = layer_values[..., :sink_count, :]
+                    sink_beta = beta.new_zeros(*layer_keys.shape[:-2], sink_count)
+                    compact_k = torch.cat([sink_k, compact_k], dim=-2)
+                    compact_v = torch.cat([sink_v, compact_v], dim=-2)
+                    beta = torch.cat([sink_beta, beta], dim=-1)
             keys.append(compact_k)
             values.append(compact_v)
             biases.append(beta)
+        output_metadata = dict(metadata or {})
+        if self.sink_tokens:
+            output_metadata["sink_tokens"] = self.sink_tokens
+            output_metadata["latent_tokens"] = self.num_latents
         return CompactKVCache(
             keys=keys,
             values=values,
             biases=biases,
-            metadata=metadata,
+            metadata=output_metadata,
             detach=False,
         )
