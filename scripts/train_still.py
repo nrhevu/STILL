@@ -115,6 +115,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--eval-limit", type=int, default=32)
     parser.add_argument("--save-every", type=int, default=0)
     parser.add_argument("--limit-train", type=int, default=0)
+    parser.add_argument(
+        "--balanced-answer-sampling",
+        action="store_true",
+        help="Sample answer letters uniformly before sampling rows within each letter.",
+    )
     parser.add_argument("--device", default="auto")
     parser.add_argument("--dtype", default="bfloat16")
     parser.add_argument("--seed", type=int, default=7)
@@ -153,6 +158,7 @@ def save_checkpoint(
             "use_chat_template": not args.no_chat_template,
             "enable_thinking": args.enable_thinking,
             "eval_enable_thinking": args.eval_enable_thinking,
+            "balanced_answer_sampling": args.balanced_answer_sampling,
             "state_dict": compactor.state_dict(),
             "metrics": metrics,
         },
@@ -320,10 +326,22 @@ def main() -> None:
         raise ValueError("--batch-size must be positive")
     if args.aux_letter_loss_weight < 0:
         raise ValueError("--aux-letter-loss-weight must be non-negative")
-    schedule = [
-        [random.randrange(len(train_rows)) for _ in range(args.batch_size)]
-        for _ in range(args.steps)
-    ]
+    if args.balanced_answer_sampling:
+        answer_groups: dict[str, list[int]] = {}
+        for index, row in enumerate(train_rows):
+            answer_groups.setdefault(answer_letter(row), []).append(index)
+        letters = sorted(answer_groups)
+        if not letters:
+            raise ValueError("Cannot use --balanced-answer-sampling with no answer groups")
+        schedule = [
+            [random.choice(answer_groups[random.choice(letters)]) for _ in range(args.batch_size)]
+            for _ in range(args.steps)
+        ]
+    else:
+        schedule = [
+            [random.randrange(len(train_rows)) for _ in range(args.batch_size)]
+            for _ in range(args.steps)
+        ]
     start_time = time.perf_counter()
     last_metrics: dict[str, float] = {}
     with metrics_path.open("w", encoding="utf-8") as metrics_file:
