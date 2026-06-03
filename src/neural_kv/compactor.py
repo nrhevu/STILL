@@ -116,15 +116,19 @@ class StillLayerCompactor(nn.Module):
         rope_theta: float,
         num_blocks: int = 2,
         latent_dropout: float = 0.0,
+        beta_base: str = "log_compression",
     ) -> None:
         super().__init__()
         if num_blocks <= 0:
             raise ValueError("num_blocks must be positive")
+        if beta_base not in {"log_compression", "zero"}:
+            raise ValueError("beta_base must be 'log_compression' or 'zero'")
         self.head_dim = int(head_dim)
         self.num_latents = int(num_latents)
         self.latent_dim = self.head_dim * 2
         self.rope_theta = float(rope_theta)
         self.latent_dropout = float(latent_dropout)
+        self.beta_base = beta_base
 
         self.latents = nn.Parameter(torch.zeros(self.num_latents, self.latent_dim))
         self.blocks = nn.ModuleList(
@@ -190,7 +194,8 @@ class StillLayerCompactor(nn.Module):
         compact_keys = self.key_head(latents)
         compact_values = self.value_head(latents)
         beta = self.beta_head(latents).squeeze(-1)
-        beta = beta + math.log(max(seq_len / self.num_latents, 1e-6))
+        if self.beta_base == "log_compression":
+            beta = beta + math.log(max(seq_len / self.num_latents, 1e-6))
         compact_keys = apply_rope(compact_keys, latent_positions, theta=self.rope_theta)
 
         compact_keys = compact_keys.reshape(batch, heads, self.num_latents, head_dim).to(dtype)
@@ -211,9 +216,11 @@ class StillCompactor(nn.Module):
         rope_theta: float,
         num_blocks: int = 2,
         latent_dropout: float = 0.0,
+        beta_base: str = "log_compression",
     ) -> None:
         super().__init__()
         self.num_latents = int(num_latents)
+        self.beta_base = beta_base
         self.layers = nn.ModuleList(
             [
                 StillLayerCompactor(
@@ -222,6 +229,7 @@ class StillCompactor(nn.Module):
                     rope_theta=rope_theta,
                     num_blocks=num_blocks,
                     latent_dropout=latent_dropout,
+                    beta_base=beta_base,
                 )
                 for _ in range(num_hidden_layers)
             ]
@@ -235,6 +243,7 @@ class StillCompactor(nn.Module):
         num_latents: int,
         num_blocks: int = 2,
         latent_dropout: float = 0.0,
+        beta_base: str = "log_compression",
     ) -> StillCompactor:
         head_dim = getattr(config, "head_dim", config.hidden_size // config.num_attention_heads)
         rope_theta = float(getattr(config, "rope_theta", 10000.0))
@@ -245,6 +254,7 @@ class StillCompactor(nn.Module):
             rope_theta=rope_theta,
             num_blocks=num_blocks,
             latent_dropout=latent_dropout,
+            beta_base=beta_base,
         )
 
     def forward(

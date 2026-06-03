@@ -58,6 +58,7 @@ def main() -> None:
     context_length = int(checkpoint["context_length"])
     num_latents = int(checkpoint["num_latents"])
     num_blocks = int(checkpoint.get("num_blocks", 2))
+    beta_base = str(checkpoint.get("beta_base", "log_compression"))
 
     device = resolve_device(args.device)
     model, tokenizer = load_model_and_tokenizer(
@@ -72,6 +73,7 @@ def main() -> None:
         model.config,
         num_latents=num_latents,
         num_blocks=num_blocks,
+        beta_base=beta_base,
     ).to(device)
     compactor.load_state_dict(checkpoint["state_dict"])
     compactor.eval()

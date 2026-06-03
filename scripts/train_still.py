@@ -42,6 +42,15 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--num-latents", type=int, default=16)
     parser.add_argument("--num-blocks", type=int, default=2)
+    parser.add_argument(
+        "--beta-base",
+        choices=["zero", "log_compression"],
+        default="zero",
+        help=(
+            "Initial beta offset. Baseten identity init uses zero; "
+            "older checkpoints used log_compression."
+        ),
+    )
     parser.add_argument("--context-length", type=int, default=256)
     parser.add_argument("--steps", type=int, default=5)
     parser.add_argument(
@@ -117,6 +126,7 @@ def save_checkpoint(
             "model": args.model,
             "num_latents": args.num_latents,
             "num_blocks": args.num_blocks,
+            "beta_base": args.beta_base,
             "context_length": args.context_length,
             "batch_size": args.batch_size,
             "latent_dropout": args.latent_dropout,
@@ -262,6 +272,7 @@ def main() -> None:
         num_latents=args.num_latents,
         num_blocks=args.num_blocks,
         latent_dropout=args.latent_dropout,
+        beta_base=args.beta_base,
     ).to(device)
     initial_step = 0
     if args.init_checkpoint:
@@ -274,6 +285,12 @@ def main() -> None:
             raise ValueError("--init-checkpoint num_latents does not match --num-latents")
         if int(checkpoint.get("num_blocks", -1)) != args.num_blocks:
             raise ValueError("--init-checkpoint num_blocks does not match --num-blocks")
+        checkpoint_beta_base = str(checkpoint.get("beta_base", "log_compression"))
+        if checkpoint_beta_base != args.beta_base:
+            raise ValueError(
+                f"--init-checkpoint beta_base {checkpoint_beta_base!r} "
+                f"does not match --beta-base {args.beta_base!r}"
+            )
         if int(checkpoint.get("context_length", -1)) != args.context_length:
             raise ValueError("--init-checkpoint context_length does not match --context-length")
         compactor.load_state_dict(checkpoint["state_dict"])
@@ -365,11 +382,11 @@ def main() -> None:
                 rows=eval_rows,
                 context_length=args.context_length,
                 device=device,
-            score_mode=args.score_mode,
-            use_chat_template=not args.no_chat_template,
-            enable_thinking=args.eval_enable_thinking,
-            max_new_tokens=args.eval_max_new_tokens,
-        )
+                score_mode=args.score_mode,
+                use_chat_template=not args.no_chat_template,
+                enable_thinking=args.eval_enable_thinking,
+                max_new_tokens=args.eval_max_new_tokens,
+            )
         )
     final_step = initial_step + args.steps
     save_checkpoint(
