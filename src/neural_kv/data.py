@@ -284,15 +284,16 @@ def download_gutenberg_texts(
     return texts
 
 
-def format_mcq_prompt(row: dict[str, object]) -> str:
+def format_mcq_prompt(row: dict[str, object], *, no_think: bool = True) -> str:
     choices = row["choices"]
     if not isinstance(choices, list):
         raise ValueError("choices must be a list")
     labels = ["A", "B", "C", "D"]
     rendered = "\n".join(f"{labels[idx]}. {choice}" for idx, choice in enumerate(choices))
+    thinking_prefix = "/no_think\n" if no_think else ""
     return (
-        "/no_think\n"
-        "Use the previous document context to answer the question.\n\n"
+        thinking_prefix
+        + "Use the previous document context to answer the question.\n\n"
         f"Question: {row['question']}\n\n"
         f"Options:\n{rendered}\n\n"
         "Answer with only the single capital letter of the correct option.\n"

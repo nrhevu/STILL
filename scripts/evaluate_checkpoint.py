@@ -14,6 +14,8 @@ from neural_kv.compactor import StillCompactor
 from neural_kv.data import answer_letter, read_jsonl
 from neural_kv.hf_training import (
     dtype_from_name,
+    generate_mcq_answer,
+    generate_mcq_no_context_answer,
     load_model_and_tokenizer,
     resolve_device,
     score_mcq_letters,
@@ -29,8 +31,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--limit", type=int, default=32)
     parser.add_argument("--device", default="auto")
     parser.add_argument("--dtype", default="bfloat16")
-    parser.add_argument("--score-mode", choices=["choice_loglik", "letter"], default="letter")
+    parser.add_argument(
+        "--score-mode",
+        choices=["choice_loglik", "letter", "generation"],
+        default="letter",
+    )
     parser.add_argument("--no-chat-template", action="store_true")
+    parser.add_argument("--enable-thinking", action="store_true")
+    parser.add_argument(
+        "--max-new-tokens",
+        type=int,
+        default=192,
+        help="Maximum generated tokens per MCQ when --score-mode=generation.",
+    )
     parser.add_argument("--max-storage", default="10TB")
     parser.add_argument("--details", action="store_true")
     return parser.parse_args()
@@ -74,39 +87,75 @@ def main() -> None:
 
     for index, row in enumerate(rows):
         gold = answer_letter(row)
-        no_context = score_mcq_no_context(
-            model=model,
-            tokenizer=tokenizer,
-            row=row,
-            device=device,
-            score_mode=args.score_mode,
-            use_chat_template=use_chat_template,
-        )
-        full, _ = score_mcq_letters(
-            model=model,
-            tokenizer=tokenizer,
-            row=row,
-            context_length=context_length,
-            device=device,
-            compactor=None,
-            score_mode=args.score_mode,
-            use_chat_template=use_chat_template,
-        )
-        compact, meta = score_mcq_letters(
-            model=model,
-            tokenizer=tokenizer,
-            row=row,
-            context_length=context_length,
-            device=device,
-            compactor=compactor,
-            score_mode=args.score_mode,
-            use_chat_template=use_chat_template,
-        )
+        if args.score_mode == "generation":
+            no_context, _ = generate_mcq_no_context_answer(
+                model=model,
+                tokenizer=tokenizer,
+                row=row,
+                device=device,
+                use_chat_template=use_chat_template,
+                enable_thinking=args.enable_thinking,
+                max_new_tokens=args.max_new_tokens,
+            )
+            full, _ = generate_mcq_answer(
+                model=model,
+                tokenizer=tokenizer,
+                row=row,
+                context_length=context_length,
+                device=device,
+                compactor=None,
+                use_chat_template=use_chat_template,
+                enable_thinking=args.enable_thinking,
+                max_new_tokens=args.max_new_tokens,
+            )
+            compact, meta = generate_mcq_answer(
+                model=model,
+                tokenizer=tokenizer,
+                row=row,
+                context_length=context_length,
+                device=device,
+                compactor=compactor,
+                use_chat_template=use_chat_template,
+                enable_thinking=args.enable_thinking,
+                max_new_tokens=args.max_new_tokens,
+            )
+        else:
+            no_context = score_mcq_no_context(
+                model=model,
+                tokenizer=tokenizer,
+                row=row,
+                device=device,
+                score_mode=args.score_mode,
+                use_chat_template=use_chat_template,
+                enable_thinking=args.enable_thinking,
+            )
+            full, _ = score_mcq_letters(
+                model=model,
+                tokenizer=tokenizer,
+                row=row,
+                context_length=context_length,
+                device=device,
+                compactor=None,
+                score_mode=args.score_mode,
+                use_chat_template=use_chat_template,
+                enable_thinking=args.enable_thinking,
+            )
+            compact, meta = score_mcq_letters(
+                model=model,
+                tokenizer=tokenizer,
+                row=row,
+                context_length=context_length,
+                device=device,
+                compactor=compactor,
+                score_mode=args.score_mode,
+                use_chat_template=use_chat_template,
+                enable_thinking=args.enable_thinking,
+            )
         no_context_correct += int(no_context == gold)
         full_correct += int(full == gold)
         compact_correct += int(compact == gold)
         compression_sum += meta["compression"]
-        compact_counts[compact] += 1
+        compact_counts[compact or "?"] += 1
         if args.details:
             details.append(
                 {

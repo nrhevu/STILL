@@ -1,6 +1,6 @@
 import torch
 
-from neural_kv.hf_training import letter_kl_and_ce_loss
+from neural_kv.hf_training import extract_answer_letter, letter_kl_and_ce_loss
 
 
 def test_letter_kl_and_ce_loss_rewards_gold_letter() -> None:
@@ -24,3 +24,13 @@ def test_letter_kl_and_ce_loss_rewards_gold_letter() -> None:
     )
 
     assert good_loss < bad_loss
+
+
+def test_extract_answer_letter_prefers_explicit_tail_answer() -> None:
+    text = "<think>I considered option A first.</think>\n\nAnswer: C"
+
+    assert extract_answer_letter(text) == "C"
+
+
+def test_extract_answer_letter_accepts_final_standalone_letter() -> None:
+    assert extract_answer_letter("After checking the context, the answer is\nD\n") == "D"

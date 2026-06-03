@@ -18,6 +18,8 @@ from neural_kv.compactor import StillCompactor
 from neural_kv.data import answer_letter, read_jsonl
 from neural_kv.hf_training import (
     dtype_from_name,
+    generate_mcq_answer,
+    generate_mcq_no_context_answer,
     load_model_and_tokenizer,
     resolve_device,
     score_mcq_letters,
@@ -52,11 +54,26 @@ def parse_args() -> argparse.Namespace:
         default="token",
         help="Use token-level KL/CE or candidate-letter KL/CE for MCQ training.",
     )
-    parser.add_argument("--target-mode", choices=["choice_text", "letter"], default="letter")
+    parser.add_argument(
+        "--target-mode",
+        choices=["choice_text", "letter", "teacher_response"],
+        default="letter",
+    )
+    parser.add_argument(
+        "--enable-thinking",
+        action="store_true",
+        help="Use thinking-enabled chat formatting for training targets.",
+    )
     parser.add_argument(
         "--score-mode",
-        choices=["choice_loglik", "letter"],
+        choices=["choice_loglik", "letter", "generation"],
         default="letter",
+    )
+    parser.add_argument(
+        "--eval-max-new-tokens",
+        type=int,
+        default=192,
+        help="Maximum generated tokens per MCQ when --score-mode=generation.",
     )
     parser.add_argument(
         "--no-chat-template",
@@ -96,7 +113,9 @@ def save_checkpoint(
             "loss_mode": args.loss_mode,
             "target_mode": args.target_mode,
             "score_mode": args.score_mode,
+            "eval_max_new_tokens": args.eval_max_new_tokens,
             "use_chat_template": not args.no_chat_template,
+            "enable_thinking": args.enable_thinking,
             "state_dict": compactor.state_dict(),
             "metrics": metrics,
         },
@@ -115,6 +134,8 @@ def evaluate(
     device: str,
     score_mode: str,
     use_chat_template: bool,
+    enable_thinking: bool,
+    max_new_tokens: int,
 ) -> dict[str, float]:
     if not rows:
         return {"compact_accuracy": 0.0, "full_accuracy": 0.0}
@@ -125,34 +146,70 @@ def evaluate(
     compactor.eval()
     for row in rows:
         gold = answer_letter(row)
-        no_context_pred = score_mcq_no_context(
-            model=model,
-            tokenizer=tokenizer,
-            row=row,
-            device=device,
-            score_mode=score_mode,
-            use_chat_template=use_chat_template,
-        )
-        full_pred, _ = score_mcq_letters(
-            model=model,
-            tokenizer=tokenizer,
-            row=row,
-            context_length=context_length,
-            device=device,
-            compactor=None,
-            score_mode=score_mode,
-            use_chat_template=use_chat_template,
-        )
-        compact_pred, compact_meta = score_mcq_letters(
-            model=model,
-            tokenizer=tokenizer,
-            row=row,
-            context_length=context_length,
-            device=device,
-            compactor=compactor,
-            score_mode=score_mode,
-            use_chat_template=use_chat_template,
-        )
+        if score_mode == "generation":
+            no_context_pred, _ = generate_mcq_no_context_answer(
+                model=model,
+                tokenizer=tokenizer,
+                row=row,
+                device=device,
+                use_chat_template=use_chat_template,
+                enable_thinking=enable_thinking,
+                max_new_tokens=max_new_tokens,
+            )
+            full_pred, _ = generate_mcq_answer(
+                model=model,
+                tokenizer=tokenizer,
+                row=row,
+                context_length=context_length,
+                device=device,
+                compactor=None,
+                use_chat_template=use_chat_template,
+                enable_thinking=enable_thinking,
+                max_new_tokens=max_new_tokens,
+            )
+            compact_pred, compact_meta = generate_mcq_answer(
+                model=model,
+                tokenizer=tokenizer,
+                row=row,
+                context_length=context_length,
+                device=device,
+                compactor=compactor,
+                use_chat_template=use_chat_template,
+                enable_thinking=enable_thinking,
+                max_new_tokens=max_new_tokens,
+            )
+        else:
+            no_context_pred = score_mcq_no_context(
+                model=model,
+                tokenizer=tokenizer,
+                row=row,
+                device=device,
+                score_mode=score_mode,
+                use_chat_template=use_chat_template,
+                enable_thinking=enable_thinking,
+            )
+            full_pred, _ = score_mcq_letters(
+                model=model,
+                tokenizer=tokenizer,
+                row=row,
+                context_length=context_length,
+                device=device,
+                compactor=None,
+                score_mode=score_mode,
+                use_chat_template=use_chat_template,
+                enable_thinking=enable_thinking,
+            )
+            compact_pred, compact_meta = score_mcq_letters(
+                model=model,
+                tokenizer=tokenizer,
+                row=row,
+                context_length=context_length,
+                device=device,
+                compactor=compactor,
+                score_mode=score_mode,
+                use_chat_template=use_chat_template,
+                enable_thinking=enable_thinking,
+            )
         no_context_correct += int(no_context_pred == gold)
         full_correct += int(full_pred == gold)
         compact_correct += int(compact_pred == gold)
@@ -227,6 +284,7 @@ def main() -> None:
                     target_mode=args.target_mode,
                     loss_mode=args.loss_mode,
                     use_chat_template=not args.no_chat_template,
+                    enable_thinking=args.enable_thinking,
                 )
                 (loss / args.batch_size).backward()
                 loss_sum += float(loss.detach().cpu())
@@ -252,6 +310,8 @@ def main() -> None:
                         device=device,
                         score_mode=args.score_mode,
                         use_chat_template=not args.no_chat_template,
+                        enable_thinking=args.enable_thinking,
+                        max_new_tokens=args.eval_max_new_tokens,
                     )
                 )
             metrics_file.write(json.dumps(last_metrics, sort_keys=True) + "\n")
@@ -277,9 +337,11 @@ def main() -> None:
                 rows=eval_rows,
                 context_length=args.context_length,
                 device=device,
-                score_mode=args.score_mode,
-                use_chat_template=not args.no_chat_template,
-            )
+            score_mode=args.score_mode,
+            use_chat_template=not args.no_chat_template,
+            enable_thinking=args.enable_thinking,
+            max_new_tokens=args.eval_max_new_tokens,
+        )
         )
     save_checkpoint(
         path=output_dir / "final.pt",

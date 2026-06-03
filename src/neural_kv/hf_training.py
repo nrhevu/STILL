@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 import torch
@@ -26,10 +27,37 @@ class EncodedMCQ:
 SYSTEM_CONTEXT_TEMPLATE = (
     "Please answer the user's question using only the provided context.\n\n"
     "<context>\n{context}\n</context>\n\n"
-    "Follow the requested answer format exactly. Do not emit <think> tags or chain-of-thought."
+    "Follow the requested answer format exactly.{thinking_instruction}"
 )
 RAW_TARGET_PREFIX = " "
 CHAT_TARGET_PREFIX = ""
+ANSWER_PATTERN = re.compile(
+    r"(?:answer|final answer)\s*[:\-]?\s*[\(\[]?([ABCD])[\)\]]?",
+    re.IGNORECASE,
+)
+TAIL_LETTER_PATTERN = re.compile(r"(?:^|[^A-Za-z])([ABCD])(?:[^A-Za-z]|$)")
+
+
+def system_context_prompt(context: str, *, enable_thinking: bool = False) -> str:
+    thinking_instruction = (
+        "" if enable_thinking else " Do not emit <think> tags or chain-of-thought."
+    )
+    return SYSTEM_CONTEXT_TEMPLATE.format(
+        context=context,
+        thinking_instruction=thinking_instruction,
+    )
+
+
+def extract_answer_letter(text: str) -> str | None:
+    answer_matches = list(ANSWER_PATTERN.finditer(text))
+    if answer_matches:
+        return answer_matches[-1].group(1).upper()
+
+    tail = text[-256:]
+    tail_matches = list(TAIL_LETTER_PATTERN.finditer(tail))
+    if tail_matches:
+        return tail_matches[-1].group(1).upper()
+    return None
 
 
 def dtype_from_name(name: str) -> torch.dtype:
@@ -89,6 +117,7 @@ def _apply_chat_template(
     messages: list[dict[str, str]],
     *,
     add_generation_prompt: bool,
+    enable_thinking: bool = False,
 ) -> str | None:
     if not getattr(tokenizer, "chat_template", None):
         return None
@@ -96,11 +125,9 @@ def _apply_chat_template(
         "tokenize": False,
         "add_generation_prompt": add_generation_prompt,
     }
-    # Qwen3 uses this flag to add the empty no-thinking block that should precede
-    # the final answer in the assistant turn.
     for extra_args in (
-        {"enable_thinking": False},
-        {"chat_template_kwargs": {"enable_thinking": False}},
+        {"enable_thinking": enable_thinking},
+        {"chat_template_kwargs": {"enable_thinking": enable_thinking}},
         {},
     ):
         try:
@@ -122,11 +149,13 @@ def _chat_ids(
     *,
     add_generation_prompt: bool,
     device: str,
+    enable_thinking: bool = False,
 ) -> torch.Tensor | None:
     rendered = _apply_chat_template(
         tokenizer,
         messages,
         add_generation_prompt=add_generation_prompt,
+        enable_thinking=enable_thinking,
     )
     if rendered is None:
         return None
@@ -144,18 +173,20 @@ def _build_chat_context(
     *,
     context_length: int,
     device: str,
+    enable_thinking: bool = False,
 ) -> tuple[str, torch.Tensor] | None:
     def build_at_budget(token_budget: int) -> tuple[str, torch.Tensor] | None:
         context_text = tokenizer.decode(
             raw_context_ids[:token_budget].tolist(),
             skip_special_tokens=False,
         )
-        system_prompt = SYSTEM_CONTEXT_TEMPLATE.format(context=context_text)
+        system_prompt = system_context_prompt(context_text, enable_thinking=enable_thinking)
         system_ids = _chat_ids(
             tokenizer,
             [{"role": "system", "content": system_prompt}],
             add_generation_prompt=False,
             device=device,
+            enable_thinking=enable_thinking,
         )
         if system_ids is None:
             return None
@@ -194,12 +225,13 @@ def _build_chat_context(
         last_oversized_budget = context_budget
         context_budget -= max(overage + 16, 1)
 
-    system_prompt = SYSTEM_CONTEXT_TEMPLATE.format(context="")
+    system_prompt = system_context_prompt("", enable_thinking=enable_thinking)
     system_ids = _chat_ids(
         tokenizer,
         [{"role": "system", "content": system_prompt}],
         add_generation_prompt=False,
         device=device,
+        enable_thinking=enable_thinking,
     )
     if system_ids is None:
         return None
@@ -212,12 +244,14 @@ def _encode_chat_continuation(
     system_prompt: str,
     user_prompt: str,
     device: str,
+    enable_thinking: bool = False,
 ) -> torch.Tensor | None:
     prefix_ids = _chat_ids(
         tokenizer,
         [{"role": "system", "content": system_prompt}],
         add_generation_prompt=False,
         device=device,
+        enable_thinking=enable_thinking,
     )
     full_ids = _chat_ids(
         tokenizer,
@@ -227,6 +261,7 @@ def _encode_chat_continuation(
         ],
         add_generation_prompt=True,
         device=device,
+        enable_thinking=enable_thinking,
     )
     if prefix_ids is None or full_ids is None:
         return None
@@ -241,6 +276,7 @@ def _encode_chat_continuation(
         tokenizer,
         [{"role": "system", "content": system_prompt}],
         add_generation_prompt=False,
+        enable_thinking=enable_thinking,
     )
     full_text = _apply_chat_template(
         tokenizer,
@@ -249,6 +285,7 @@ def _encode_chat_continuation(
             {"role": "user", "content": user_prompt},
         ],
         add_generation_prompt=True,
+        enable_thinking=enable_thinking,
     )
     if prefix_text is None or full_text is None or not full_text.startswith(prefix_text):
         return None
@@ -266,10 +303,11 @@ def _encode_no_context_prompt(
     *,
     device: str,
     use_chat_template: bool,
+    enable_thinking: bool = False,
 ) -> tuple[torch.Tensor, str]:
-    prompt = format_mcq_prompt(row)
+    prompt = format_mcq_prompt(row, no_think=not enable_thinking)
     if use_chat_template:
-        system_prompt = SYSTEM_CONTEXT_TEMPLATE.format(context="")
+        system_prompt = system_context_prompt("", enable_thinking=enable_thinking)
         prompt_ids = _chat_ids(
             tokenizer,
             [
@@ -278,6 +316,7 @@ def _encode_no_context_prompt(
             ],
             add_generation_prompt=True,
             device=device,
+            enable_thinking=enable_thinking,
         )
         if prompt_ids is not None:
             return prompt_ids, CHAT_TARGET_PREFIX
@@ -346,8 +385,9 @@ def encode_mcq(
     device: str,
     target_mode: str = "choice_text",
     use_chat_template: bool = True,
+    enable_thinking: bool = False,
 ) -> EncodedMCQ:
-    prompt = format_mcq_prompt(row)
+    prompt = format_mcq_prompt(row, no_think=not enable_thinking)
     target_prefix = RAW_TARGET_PREFIX
     used_chat_template = False
     if use_chat_template:
@@ -356,6 +396,7 @@ def encode_mcq(
             str(row["context"]),
             context_length=context_length,
             device=device,
+            enable_thinking=enable_thinking,
         )
         if chat_context is not None:
             system_prompt, context_ids = chat_context
@@ -364,6 +405,7 @@ def encode_mcq(
                 system_prompt=system_prompt,
                 user_prompt=prompt,
                 device=device,
+                enable_thinking=enable_thinking,
             )
             if chat_prompt_ids is not None and int(chat_prompt_ids.shape[-1]) > 0:
                 context_ids = _pad_chat_context_ids(
@@ -419,11 +461,27 @@ def encode_mcq(
         target_text = letter
     elif target_mode == "choice_text":
         target_text = str(row["answer"])
+    elif target_mode == "teacher_response":
+        target_ids_value = row.get("teacher_response_token_ids")
+        if isinstance(target_ids_value, list) and target_ids_value:
+            target_ids = torch.tensor([target_ids_value], device=device, dtype=torch.long)
+            return EncodedMCQ(
+                context_ids=context_ids,
+                prompt_ids=prompt_ids,
+                target_ids=target_ids,
+                answer_letter=letter,
+                target_prefix=target_prefix,
+                used_chat_template=used_chat_template,
+            )
+        target_text = str(row.get("teacher_response") or "")
+        if not target_text:
+            raise ValueError("target_mode=teacher_response requires teacher_response text or ids")
     else:
         raise ValueError(f"Unsupported target_mode: {target_mode}")
+    prefix = target_prefix if target_mode != "teacher_response" else ""
     target_ids = _tokenize_text(
         tokenizer,
-        target_prefix + target_text,
+        prefix + target_text,
         device=device,
         add_special_tokens=False,
     )
@@ -560,6 +618,7 @@ def training_forward(
     target_mode: str,
     loss_mode: str = "token",
     use_chat_template: bool = True,
+    enable_thinking: bool = False,
 ) -> tuple[torch.Tensor, dict[str, float]]:
     encoded = encode_mcq(
         tokenizer,
@@ -568,6 +627,7 @@ def training_forward(
         device=device,
         target_mode=target_mode,
         use_chat_template=use_chat_template,
+        enable_thinking=enable_thinking,
     )
     if loss_mode == "token":
         model_inputs = _continuation_inputs(encoded)
@@ -714,12 +774,14 @@ def score_mcq_no_context(
     device: str,
     score_mode: str = "choice_loglik",
     use_chat_template: bool = True,
+    enable_thinking: bool = False,
 ) -> str:
     prompt_ids, target_prefix = _encode_no_context_prompt(
         tokenizer,
         row,
         device=device,
         use_chat_template=use_chat_template,
+        enable_thinking=enable_thinking,
     )
     if score_mode == "letter":
         label_ids = _letter_ids(tokenizer, target_prefix=target_prefix, device=device)
@@ -758,6 +820,7 @@ def score_mcq_letters(
     compactor: StillCompactor | None = None,
     score_mode: str = "choice_loglik",
     use_chat_template: bool = True,
+    enable_thinking: bool = False,
 ) -> tuple[str, dict[str, float]]:
     encoded = encode_mcq(
         tokenizer,
@@ -766,6 +829,7 @@ def score_mcq_letters(
         device=device,
         target_mode="letter",
         use_chat_template=use_chat_template,
+        enable_thinking=enable_thinking,
     )
     source_tokens = int(encoded.context_ids.shape[-1])
     prompt_len = int(encoded.prompt_ids.shape[-1])
@@ -877,6 +941,184 @@ def score_mcq_letters(
     else:
         raise ValueError(f"Unsupported score_mode: {score_mode}")
     return "ABCD"[winner], {
+        "source_tokens": float(source_tokens),
+        "cache_tokens": float(cache_tokens),
+        "compression": float(source_tokens / max(cache_tokens, 1)),
+        "used_chat_template": float(encoded.used_chat_template),
+    }
+
+
+def _forward_with_optional_biases(model, biases: list[torch.Tensor] | None, **kwargs):
+    if biases is None:
+        return model(**kwargs)
+    with still_biases(biases):
+        return model(**kwargs)
+
+
+@torch.no_grad()
+def _greedy_generate(
+    *,
+    model,
+    tokenizer,
+    prompt_ids: torch.Tensor,
+    past_key_values,
+    cache_tokens: int,
+    source_position_start: int,
+    max_new_tokens: int,
+    biases: list[torch.Tensor] | None = None,
+) -> str:
+    prompt_len = int(prompt_ids.shape[-1])
+    if biases is not None:
+        generated: list[int] = []
+        eos_id = tokenizer.eos_token_id
+        for _ in range(max_new_tokens):
+            if generated:
+                generated_ids = torch.tensor(
+                    [generated],
+                    device=prompt_ids.device,
+                    dtype=prompt_ids.dtype,
+                )
+                model_inputs = torch.cat([prompt_ids, generated_ids], dim=-1)
+            else:
+                model_inputs = prompt_ids
+            outputs = _forward_with_optional_biases(
+                model,
+                biases,
+                input_ids=model_inputs,
+                past_key_values=past_key_values,
+                attention_mask=_attention_mask(
+                    cache_tokens,
+                    int(model_inputs.shape[-1]),
+                    device=prompt_ids.device,
+                ),
+                position_ids=_position_ids(
+                    source_position_start,
+                    int(model_inputs.shape[-1]),
+                    device=prompt_ids.device,
+                ),
+                use_cache=False,
+            )
+            next_id = int(torch.argmax(outputs.logits[:, -1, :], dim=-1).item())
+            if eos_id is not None and next_id == int(eos_id):
+                break
+            generated.append(next_id)
+        return tokenizer.decode(generated, skip_special_tokens=False)
+
+    outputs = _forward_with_optional_biases(
+        model,
+        biases,
+        input_ids=prompt_ids,
+        past_key_values=past_key_values,
+        attention_mask=_attention_mask(cache_tokens, prompt_len, device=prompt_ids.device),
+        position_ids=_position_ids(source_position_start, prompt_len, device=prompt_ids.device),
+        use_cache=True,
+    )
+    next_token = torch.argmax(outputs.logits[:, -1, :], dim=-1, keepdim=True)
+    past_key_values = outputs.past_key_values
+    eos_id = tokenizer.eos_token_id
+    generated: list[int] = []
+
+    for _ in range(max_new_tokens):
+        token_id = int(next_token.item())
+        if eos_id is not None and token_id == int(eos_id):
+            break
+        generated.append(token_id)
+        past_tokens = cache_tokens + prompt_len + len(generated) - 1
+        position = source_position_start + prompt_len + len(generated) - 1
+        outputs = _forward_with_optional_biases(
+            model,
+            biases,
+            input_ids=next_token,
+            past_key_values=past_key_values,
+            attention_mask=_attention_mask(past_tokens, 1, device=prompt_ids.device),
+            position_ids=_position_ids(position, 1, device=prompt_ids.device),
+            use_cache=True,
+        )
+        past_key_values = outputs.past_key_values
+        next_token = torch.argmax(outputs.logits[:, -1, :], dim=-1, keepdim=True)
+
+    return tokenizer.decode(generated, skip_special_tokens=False)
+
+
+@torch.no_grad()
+def generate_mcq_no_context_answer(
+    *,
+    model,
+    tokenizer,
+    row: dict[str, object],
+    device: str,
+    use_chat_template: bool = True,
+    enable_thinking: bool = False,
+    max_new_tokens: int = 192,
+) -> tuple[str | None, dict[str, object]]:
+    prompt_ids, _ = _encode_no_context_prompt(
+        tokenizer,
+        row,
+        device=device,
+        use_chat_template=use_chat_template,
+        enable_thinking=enable_thinking,
+    )
+    text = _greedy_generate(
+        model=model,
+        tokenizer=tokenizer,
+        prompt_ids=prompt_ids,
+        past_key_values=None,
+        cache_tokens=0,
+        source_position_start=0,
+        max_new_tokens=max_new_tokens,
+    )
+    return extract_answer_letter(text), {"generated_text": text}
+
+
+@torch.no_grad()
+def generate_mcq_answer(
+    *,
+    model,
+    tokenizer,
+    row: dict[str, object],
+    context_length: int,
+    device: str,
+    compactor: StillCompactor | None = None,
+    use_chat_template: bool = True,
+    enable_thinking: bool = False,
+    max_new_tokens: int = 192,
+) -> tuple[str | None, dict[str, object]]:
+    encoded = encode_mcq(
+        tokenizer,
+        row,
+        context_length=context_length,
+        device=device,
+        target_mode="letter",
+        use_chat_template=use_chat_template,
+        enable_thinking=enable_thinking,
+    )
+    source_tokens = int(encoded.context_ids.shape[-1])
+    full_outputs = model(input_ids=encoded.context_ids, use_cache=True)
+    if compactor is None:
+        past_key_values = full_outputs.past_key_values
+        cache_tokens = source_tokens
+        biases = None
+    else:
+        compact_cache = compactor(
+            full_outputs.past_key_values,
+            metadata={"source_tokens": source_tokens},
+        )
+        past_key_values = compact_cache.as_dynamic_cache()
+        cache_tokens = compact_cache.num_tokens
+        biases = compact_cache.biases
+
+    text = _greedy_generate(
+        model=model,
+        tokenizer=tokenizer,
+        prompt_ids=encoded.prompt_ids,
+        past_key_values=past_key_values,
+        cache_tokens=cache_tokens,
+        source_position_start=source_tokens,
+        max_new_tokens=max_new_tokens,
+        biases=biases,
+    )
+    return extract_answer_letter(text), {
+        "generated_text": text,
         "source_tokens": float(source_tokens),
         "cache_tokens": float(cache_tokens),
         "compression": float(source_tokens / max(cache_tokens, 1)),

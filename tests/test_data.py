@@ -23,6 +23,8 @@ def test_build_mcq_examples_from_text() -> None:
     prompt = format_mcq_prompt(rows[0].__dict__)
     assert "Question:" in prompt
     assert "A." in prompt
+    assert prompt.startswith("/no_think")
+    assert not format_mcq_prompt(rows[0].__dict__, no_think=False).startswith("/no_think")
 
 
 def test_chunk_texts_expands_long_sources() -> None:
