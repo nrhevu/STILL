@@ -126,6 +126,12 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Sample answer letters uniformly before sampling rows within each letter.",
     )
+    parser.add_argument(
+        "--trainable-scope",
+        choices=["all", "beta", "heads", "beta_heads"],
+        default="all",
+        help="Restrict trainable compactor parameters for fine-tuning experiments.",
+    )
     parser.add_argument("--device", default="auto")
     parser.add_argument("--dtype", default="bfloat16")
     parser.add_argument("--seed", type=int, default=7)
@@ -166,6 +172,7 @@ def save_checkpoint(
             "enable_thinking": args.enable_thinking,
             "eval_enable_thinking": args.eval_enable_thinking,
             "balanced_answer_sampling": args.balanced_answer_sampling,
+            "trainable_scope": args.trainable_scope,
             "state_dict": compactor.state_dict(),
             "metrics": metrics,
         },
@@ -330,8 +337,26 @@ def main() -> None:
             raise ValueError("--init-checkpoint context_length does not match --context-length")
         compactor.load_state_dict(checkpoint["state_dict"])
         initial_step = int(checkpoint.get("step", 0))
+
+    trainable_keywords = {
+        "all": None,
+        "beta": ("beta_head",),
+        "heads": ("key_head", "value_head"),
+        "beta_heads": ("beta_head", "key_head", "value_head"),
+    }[args.trainable_scope]
+    trainable_parameters: list[torch.nn.Parameter] = []
+    for name, parameter in compactor.named_parameters():
+        is_trainable = trainable_keywords is None or any(
+            keyword in name for keyword in trainable_keywords
+        )
+        parameter.requires_grad_(is_trainable)
+        if is_trainable:
+            trainable_parameters.append(parameter)
+    if not trainable_parameters:
+        raise ValueError(f"No trainable parameters selected for scope {args.trainable_scope!r}")
+
     compactor.train()
-    optimizer = AdamW(compactor.parameters(), lr=args.learning_rate)
+    optimizer = AdamW(trainable_parameters, lr=args.learning_rate)
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     metrics_path = output_dir / "metrics.jsonl"
