@@ -63,6 +63,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--kl-weight", type=float, default=1.0)
     parser.add_argument("--ce-weight", type=float, default=0.1)
     parser.add_argument(
+        "--aux-letter-loss-weight",
+        type=float,
+        default=0.0,
+        help="Optional weight for an auxiliary direct-letter distillation loss.",
+    )
+    parser.add_argument(
+        "--aux-letter-enable-thinking",
+        action="store_true",
+        help="Use thinking-enabled formatting for the auxiliary direct-letter loss.",
+    )
+    parser.add_argument(
         "--loss-mode",
         choices=["token", "letter"],
         default="token",
@@ -129,6 +140,10 @@ def save_checkpoint(
             "beta_base": args.beta_base,
             "context_length": args.context_length,
             "batch_size": args.batch_size,
+            "kl_weight": args.kl_weight,
+            "ce_weight": args.ce_weight,
+            "aux_letter_loss_weight": args.aux_letter_loss_weight,
+            "aux_letter_enable_thinking": args.aux_letter_enable_thinking,
             "latent_dropout": args.latent_dropout,
             "loss_mode": args.loss_mode,
             "target_mode": args.target_mode,
@@ -303,6 +318,8 @@ def main() -> None:
 
     if args.batch_size <= 0:
         raise ValueError("--batch-size must be positive")
+    if args.aux_letter_loss_weight < 0:
+        raise ValueError("--aux-letter-loss-weight must be non-negative")
     schedule = [
         [random.randrange(len(train_rows)) for _ in range(args.batch_size)]
         for _ in range(args.steps)
@@ -317,7 +334,7 @@ def main() -> None:
             loss_sum = 0.0
             for row_index in row_indices:
                 row = train_rows[row_index]
-                loss, metrics = training_forward(
+                primary_loss, metrics = training_forward(
                     model=model,
                     tokenizer=tokenizer,
                     compactor=compactor,
@@ -331,6 +348,27 @@ def main() -> None:
                     use_chat_template=not args.no_chat_template,
                     enable_thinking=args.enable_thinking,
                 )
+                loss = primary_loss
+                metrics["primary_loss"] = float(primary_loss.detach().cpu())
+                if args.aux_letter_loss_weight > 0:
+                    aux_loss, aux_metrics = training_forward(
+                        model=model,
+                        tokenizer=tokenizer,
+                        compactor=compactor,
+                        row=row,
+                        context_length=args.context_length,
+                        device=device,
+                        kl_weight=args.kl_weight,
+                        ce_weight=args.ce_weight,
+                        target_mode="letter",
+                        loss_mode="letter",
+                        use_chat_template=not args.no_chat_template,
+                        enable_thinking=args.aux_letter_enable_thinking,
+                    )
+                    loss = loss + args.aux_letter_loss_weight * aux_loss
+                    metrics["aux_letter_loss"] = float(aux_loss.detach().cpu())
+                    for key, value in aux_metrics.items():
+                        metrics[f"aux_letter_{key}"] = value
                 (loss / args.batch_size).backward()
                 loss_sum += float(loss.detach().cpu())
                 for key, value in metrics.items():
