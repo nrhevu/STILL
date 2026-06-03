@@ -65,6 +65,13 @@ Article-scale run:
   --max-storage 10TB
 ```
 
+Target gate after an article-scale run:
+
+```bash
+.uv-bootstrap/bin/uv run python scripts/check_performance_target.py \
+  checkpoints/qwen3_4b_8x/summary.json
+```
+
 ## What Is Implemented
 
 - Per-layer STILL perceiver compactor.

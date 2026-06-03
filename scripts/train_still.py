@@ -21,6 +21,7 @@ from neural_kv.hf_training import (
     load_model_and_tokenizer,
     resolve_device,
     score_mcq_letters,
+    score_mcq_no_context,
     training_forward,
 )
 from neural_kv.storage import check_storage_quota
@@ -87,10 +88,17 @@ def evaluate(
         return {"compact_accuracy": 0.0, "full_accuracy": 0.0}
     compact_correct = 0
     full_correct = 0
+    no_context_correct = 0
     compression_sum = 0.0
     compactor.eval()
     for row in rows:
         gold = answer_letter(row)
+        no_context_pred = score_mcq_no_context(
+            model=model,
+            tokenizer=tokenizer,
+            row=row,
+            device=device,
+        )
         full_pred, _ = score_mcq_letters(
             model=model,
             tokenizer=tokenizer,
@@ -107,6 +115,7 @@ def evaluate(
             device=device,
             compactor=compactor,
         )
+        no_context_correct += int(no_context_pred == gold)
         full_correct += int(full_pred == gold)
         compact_correct += int(compact_pred == gold)
         compression_sum += compact_meta["compression"]
@@ -114,6 +123,7 @@ def evaluate(
     return {
         "compact_accuracy": compact_correct / len(rows),
         "full_accuracy": full_correct / len(rows),
+        "no_context_accuracy": no_context_correct / len(rows),
         "mean_compression": compression_sum / len(rows),
     }
 

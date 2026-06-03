@@ -220,6 +220,28 @@ def training_forward(
 
 
 @torch.no_grad()
+def score_mcq_no_context(
+    *,
+    model,
+    tokenizer,
+    row: dict[str, object],
+    device: str,
+) -> str:
+    prompt_ids = tokenizer(
+        format_mcq_prompt(row),
+        return_tensors="pt",
+        add_special_tokens=False,
+    ).input_ids.to(device)
+    label_ids = [
+        tokenizer(" " + label, return_tensors="pt", add_special_tokens=False).input_ids[0, 0].item()
+        for label in "ABCD"
+    ]
+    outputs = model(input_ids=prompt_ids, use_cache=False)
+    next_logits = outputs.logits[0, prompt_ids.shape[-1] - 1, label_ids].float()
+    return "ABCD"[int(torch.argmax(next_logits).item())]
+
+
+@torch.no_grad()
 def score_mcq_letters(
     *,
     model,
