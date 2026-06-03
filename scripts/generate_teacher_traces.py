@@ -27,6 +27,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-file", required=True)
     parser.add_argument("--context-length", type=int, default=8192)
     parser.add_argument("--limit", type=int, default=0)
+    parser.add_argument(
+        "--start-index",
+        type=int,
+        default=0,
+        help="Skip this many input rows before generating traces.",
+    )
+    parser.add_argument(
+        "--append",
+        action="store_true",
+        help="Append traces to --output-file instead of overwriting it.",
+    )
     parser.add_argument("--max-new-tokens", type=int, default=192)
     parser.add_argument("--device", default="auto")
     parser.add_argument("--dtype", default="bfloat16")
@@ -113,12 +124,15 @@ def main() -> None:
         device=device,
         dtype=dtype_from_name(args.dtype),
     )
-    rows = read_jsonl(args.input_file, limit=(args.limit or None))
+    if args.start_index < 0:
+        raise ValueError("--start-index must be non-negative")
+    rows = read_jsonl(args.input_file, limit=(args.limit or None))[args.start_index :]
     output_path = Path(args.output_file)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     correct_tail = 0
-    with output_path.open("w", encoding="utf-8") as handle:
+    output_mode = "a" if args.append else "w"
+    with output_path.open(output_mode, encoding="utf-8") as handle:
         for row in tqdm(rows, desc="teacher traces"):
             token_ids, text = generate_response(
                 model=model,
@@ -143,6 +157,7 @@ def main() -> None:
         json.dumps(
             {
                 "rows": len(rows),
+                "start_index": args.start_index,
                 "tail_contains_gold": correct_tail,
                 "output_file": str(output_path),
             },
