@@ -102,7 +102,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--score-mode",
-        choices=["choice_loglik", "letter", "generation"],
+        choices=["choice_loglik", "letter", "letter_delta", "generation"],
         default="letter",
     )
     parser.add_argument(

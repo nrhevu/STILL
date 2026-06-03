@@ -783,7 +783,7 @@ def score_mcq_no_context(
         use_chat_template=use_chat_template,
         enable_thinking=enable_thinking,
     )
-    if score_mode == "letter":
+    if score_mode in {"letter", "letter_delta"}:
         label_ids = _letter_ids(tokenizer, target_prefix=target_prefix, device=device)
         outputs = model(input_ids=prompt_ids, use_cache=False)
         next_logits = outputs.logits[0, prompt_ids.shape[-1] - 1, label_ids].float()
@@ -846,7 +846,7 @@ def score_mcq_letters(
         )
         cache_tokens = compact_cache.num_tokens
 
-    if score_mode == "letter":
+    if score_mode in {"letter", "letter_delta"}:
         label_ids = _letter_ids(
             tokenizer,
             target_prefix=encoded.target_prefix,
@@ -886,6 +886,26 @@ def score_mcq_letters(
                     use_cache=False,
                 )
         next_logits = outputs.logits[0, prompt_len - 1, label_ids].float()
+        if score_mode == "letter_delta":
+            no_context_prompt_ids, no_context_prefix = _encode_no_context_prompt(
+                tokenizer,
+                row,
+                device=device,
+                use_chat_template=use_chat_template,
+                enable_thinking=enable_thinking,
+            )
+            no_context_label_ids = _letter_ids(
+                tokenizer,
+                target_prefix=no_context_prefix,
+                device=device,
+            )
+            no_context_outputs = model(input_ids=no_context_prompt_ids, use_cache=False)
+            no_context_logits = no_context_outputs.logits[
+                0,
+                no_context_prompt_ids.shape[-1] - 1,
+                no_context_label_ids,
+            ].float()
+            next_logits = next_logits - no_context_logits
         winner = int(torch.argmax(next_logits).item())
     elif score_mode == "choice_loglik":
         scores: list[float] = []

@@ -33,7 +33,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dtype", default="bfloat16")
     parser.add_argument(
         "--score-mode",
-        choices=["choice_loglik", "letter", "generation"],
+        choices=["choice_loglik", "letter", "letter_delta", "generation"],
         default="letter",
     )
     parser.add_argument("--no-chat-template", action="store_true")
