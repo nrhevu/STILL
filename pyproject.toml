@@ -1,0 +1,45 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "neural-kv-compressor"
+version = "0.1.0"
+description = "STILL-style neural KV-cache compaction with bounded data preparation and evaluation."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "numpy>=2.0,<3",
+  "PyYAML>=6.0,<7",
+  "tqdm>=4.66,<5",
+]
+
+[project.optional-dependencies]
+train = [
+  "accelerate>=1.0,<2",
+  "datasets>=3.0,<5",
+  "einops>=0.8,<1",
+  "huggingface-hub>=0.30,<1",
+  "safetensors>=0.5,<1",
+  "sentencepiece>=0.2,<1",
+  "torch>=2.5,<3",
+  "transformers>=4.51,<5",
+]
+dev = [
+  "pytest>=8.0,<9",
+  "ruff>=0.8,<1",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/neural_kv"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["B", "E", "F", "I", "UP"]
