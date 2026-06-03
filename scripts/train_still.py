@@ -24,7 +24,7 @@ from neural_kv.hf_training import (
     score_mcq_no_context,
     training_forward,
 )
-from neural_kv.storage import check_storage_quota
+from neural_kv.storage import check_storage_quota, default_storage_roots
 
 
 def parse_args() -> argparse.Namespace:
@@ -135,7 +135,7 @@ def main() -> None:
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(args.seed)
 
-    roots = [Path("data"), Path("checkpoints"), Path("artifacts"), Path(".venv")]
+    roots = default_storage_roots()
     print(f"storage before training: {check_storage_quota(roots, args.max_storage).summary()}")
 
     device = resolve_device(args.device)

@@ -13,13 +13,27 @@ Sources used for the implementation direction:
 
 `uv` is expected. If it is not on `PATH`, this repo can use the local bootstrap installed at `.uv-bootstrap/bin/uv`.
 
+This project targets AMD GPUs with PyTorch ROCm. `pyproject.toml` pins Linux Torch packages to the official PyTorch ROCm 7.2 wheel index via uv. Do not let uv resolve the default PyPI Torch wheel, because that can install CUDA packages on this host.
+
 ```bash
 .uv-bootstrap/bin/uv sync --extra train --extra dev
 ```
 
+Validate the ROCm environment:
+
+```bash
+.uv-bootstrap/bin/uv run python scripts/check_rocm_env.py
+```
+
+If this reports `/dev/kfd` access failure, the current user needs membership in the `render` group before ROCm compute will work. `rocm-smi` can list devices without that compute permission, but PyTorch cannot train without it. On this host that means an admin needs to add the user and start a fresh login session:
+
+```bash
+sudo usermod -aG render "$USER"
+```
+
 ## Data
 
-The data preparation script defaults to downloading a bounded public-domain Project Gutenberg corpus and creating deterministic extractive MCQs for train/validation/test. A Hugging Face Datasets path is still available with `--source hf`. The script checks the project storage footprint against a configurable quota before and after download. The default quota is `10TB`.
+The data preparation script defaults to downloading a bounded public-domain Project Gutenberg corpus and creating deterministic extractive MCQs for train/validation/test. A Hugging Face Datasets path is still available with `--source hf`. The script checks the project storage footprint against a configurable quota before and after download. The default quota is `10TB`; the check includes `data`, `checkpoints`, `artifacts`, `.venv`, `.uv-bootstrap`, and uv's shared cache.
 
 ```bash
 .uv-bootstrap/bin/uv run python scripts/prepare_data.py \

@@ -74,6 +74,20 @@ def directory_size(path: str | Path) -> int:
     return total
 
 
+def default_storage_roots() -> list[Path]:
+    """Return paths that this project commonly uses for large local artifacts."""
+    roots = [
+        Path("data"),
+        Path("checkpoints"),
+        Path("artifacts"),
+        Path(".venv"),
+        Path(".uv-bootstrap"),
+    ]
+    uv_cache = os.environ.get("UV_CACHE_DIR")
+    roots.append(Path(uv_cache) if uv_cache else Path.home() / ".cache" / "uv")
+    return roots
+
+
 @dataclass(frozen=True)
 class StorageReport:
     """Storage usage report for project-controlled paths."""
@@ -96,7 +110,19 @@ class StorageReport:
 def check_storage_quota(roots: list[str | Path], max_storage: str | int = "10TB") -> StorageReport:
     """Raise if the combined size of ``roots`` exceeds ``max_storage``."""
     quota = parse_size(max_storage)
-    root_paths = tuple(Path(root) for root in roots)
+    unique_roots: list[Path] = []
+    seen: set[Path] = set()
+    for root in roots:
+        path = Path(root)
+        try:
+            key = path.resolve()
+        except FileNotFoundError:
+            key = path.absolute()
+        if key in seen:
+            continue
+        seen.add(key)
+        unique_roots.append(path)
+    root_paths = tuple(unique_roots)
     used = sum(directory_size(root) for root in root_paths)
     report = StorageReport(used_bytes=used, quota_bytes=quota, roots=root_paths)
     if used > quota:

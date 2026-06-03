@@ -7,7 +7,7 @@ name = "neural-kv-compressor"
 version = "0.1.0"
 description = "STILL-style neural KV-cache compaction with bounded data preparation and evaluation."
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.11,<3.14"
 dependencies = [
   "numpy>=2.0,<3",
   "PyYAML>=6.0,<7",
@@ -22,8 +22,9 @@ train = [
   "huggingface-hub>=0.30,<1",
   "safetensors>=0.5,<1",
   "sentencepiece>=0.2,<1",
-  "torch>=2.5,<3",
+  "torch==2.11.0 ; sys_platform == 'linux'",
   "transformers>=4.51,<5",
+  "triton-rocm==3.6.0 ; sys_platform == 'linux'",
 ]
 dev = [
   "pytest>=8.0,<9",
@@ -43,3 +44,16 @@ target-version = "py311"
 
 [tool.ruff.lint]
 select = ["B", "E", "F", "I", "UP"]
+
+[tool.uv.sources]
+torch = [
+  { index = "pytorch-rocm", marker = "sys_platform == 'linux'" },
+]
+triton-rocm = [
+  { index = "pytorch-rocm", marker = "sys_platform == 'linux'" },
+]
+
+[[tool.uv.index]]
+name = "pytorch-rocm"
+url = "https://download.pytorch.org/whl/rocm7.2"
+explicit = true

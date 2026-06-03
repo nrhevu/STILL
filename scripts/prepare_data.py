@@ -8,7 +8,7 @@ import os
 from pathlib import Path
 
 from neural_kv.data import build_mcq_examples, download_gutenberg_texts, load_hf_texts, write_jsonl
-from neural_kv.storage import check_storage_quota
+from neural_kv.storage import check_storage_quota, default_storage_roots
 
 DEFAULT_GUTENBERG_IDS = [
     1342,   # Pride and Prejudice
@@ -62,7 +62,7 @@ def main() -> None:
     os.environ.setdefault("HF_HOME", str(hf_cache_dir))
     os.environ.setdefault("HF_DATASETS_CACHE", str(hf_cache_dir / "datasets"))
 
-    roots = [Path("data"), Path("checkpoints"), Path("artifacts"), Path(".venv")]
+    roots = default_storage_roots()
     before = check_storage_quota(roots, args.max_storage)
     print(f"storage before download: {before.summary()}", flush=True)
 
