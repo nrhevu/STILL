@@ -43,6 +43,30 @@ def normalize_text(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
+def chunk_texts(
+    texts: list[str],
+    *,
+    context_chars: int,
+    chunks_per_text: int,
+    stride_chars: int,
+) -> list[str]:
+    """Expand long source texts into overlapping fixed-character chunks."""
+    if chunks_per_text <= 1:
+        return texts
+    stride = stride_chars if stride_chars > 0 else max(context_chars // 2, 1)
+    chunks: list[str] = []
+    for text in texts:
+        for chunk_idx in range(chunks_per_text):
+            start = chunk_idx * stride
+            end = start + context_chars
+            if start >= len(text):
+                break
+            chunk = text[start:end]
+            if len(chunk) >= min(400, context_chars):
+                chunks.append(chunk)
+    return chunks
+
+
 def _candidate_answers(text: str) -> list[str]:
     candidates: list[str] = []
     for regex in (_NUMBER_RE, _CAPITALIZED_RE, _WORD_RE):
@@ -61,12 +85,32 @@ def _candidate_answers(text: str) -> list[str]:
 
 
 def _question_for_answer(context: str, answer: str) -> str:
-    sentences = re.split(r"(?<=[.!?])\s+", context)
-    containing = next((sentence for sentence in sentences if answer in sentence), "")
-    if containing:
-        cloze = containing.replace(answer, "____", 1)
-        return f"Which option best fills the blank from the document: {cloze}"
-    return "Which option is explicitly mentioned in the document?"
+    return (
+        "Which option is explicitly mentioned in the cached document? "
+        "Only one option appears in the document."
+    )
+
+
+def _sample_absent_distractors(
+    *,
+    answer: str,
+    all_answers: list[str],
+    context_lower: str,
+    rng: random.Random,
+    count: int = 3,
+) -> list[str]:
+    distractors: list[str] = []
+    seen = {answer.lower()}
+    max_attempts = min(len(all_answers), 512)
+    for candidate in rng.sample(all_answers, k=max_attempts):
+        key = candidate.lower()
+        if key in seen or key in context_lower:
+            continue
+        distractors.append(candidate)
+        seen.add(key)
+        if len(distractors) == count:
+            break
+    return distractors
 
 
 def build_mcq_examples(
@@ -96,11 +140,16 @@ def build_mcq_examples(
             continue
         rng.shuffle(candidates)
         made = 0
+        context_lower = context.lower()
         for answer in candidates:
-            distractor_pool = [item for item in all_answers if item.lower() != answer.lower()]
-            if len(distractor_pool) < 3:
-                break
-            distractors = rng.sample(distractor_pool, 3)
+            distractors = _sample_absent_distractors(
+                answer=answer,
+                all_answers=all_answers,
+                context_lower=context_lower,
+                rng=rng,
+            )
+            if len(distractors) < 3:
+                continue
             choices = [answer, *distractors]
             rng.shuffle(choices)
             answer_index = choices.index(answer)
@@ -242,9 +291,11 @@ def format_mcq_prompt(row: dict[str, object]) -> str:
     labels = ["A", "B", "C", "D"]
     rendered = "\n".join(f"{labels[idx]}. {choice}" for idx, choice in enumerate(choices))
     return (
-        "Answer the question using the cached document. Reply with only the option letter.\n\n"
-        f"Question: {row['question']}\n"
-        f"{rendered}\n"
+        "/no_think\n"
+        "Use the previous document context to answer the question.\n\n"
+        f"Question: {row['question']}\n\n"
+        f"Options:\n{rendered}\n\n"
+        "Answer with only the single capital letter of the correct option.\n"
         "Answer:"
     )
 

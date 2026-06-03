@@ -3,21 +3,10 @@
 
 from __future__ import annotations
 
-import grp
 import os
 from pathlib import Path
 
 import torch
-
-
-def _supplementary_group_names() -> set[str]:
-    names: set[str] = set()
-    for gid in os.getgroups():
-        try:
-            names.add(grp.getgrgid(gid).gr_name)
-        except KeyError:
-            continue
-    return names
 
 
 def main() -> None:
@@ -32,8 +21,8 @@ def main() -> None:
         failures.append("Torch is not a ROCm/HIP build.")
     if torch.version.cuda is not None:
         failures.append("Torch reports CUDA support; expected ROCm/HIP only.")
-    if Path("/dev/kfd").exists() and "render" not in _supplementary_group_names():
-        failures.append("Current user is not in the render group required for /dev/kfd access.")
+    if Path("/dev/kfd").exists() and not os.access("/dev/kfd", os.R_OK | os.W_OK):
+        failures.append("Current process cannot read/write /dev/kfd.")
     if not torch.cuda.is_available():
         failures.append("ROCm Torch does not see an available HIP device via torch.cuda.")
 

@@ -2,13 +2,20 @@
 .uv-bootstrap/
 .pytest_cache/
 .ruff_cache/
+.cache/
 __pycache__/
 *.py[cod]
 
 # Large local artifacts. Keep manifests/configs in git, not downloaded corpora or checkpoints.
 data/hf_cache/
+data/cache/
+data/comgr_cache/
 data/raw/
+data/torchinductor_cache/
+data/uv_cache/
 data/mcq/*.jsonl
+data/squad_mcq/
+data/sec_facts/
 checkpoints/
 artifacts/
 outputs/

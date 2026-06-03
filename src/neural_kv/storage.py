@@ -82,6 +82,11 @@ def default_storage_roots() -> list[Path]:
         Path("artifacts"),
         Path(".venv"),
         Path(".uv-bootstrap"),
+        Path(".cache"),
+        Path("data/cache"),
+        Path("data/comgr_cache"),
+        Path("data/torchinductor_cache"),
+        Path("data/uv_cache"),
     ]
     uv_cache = os.environ.get("UV_CACHE_DIR")
     roots.append(Path(uv_cache) if uv_cache else Path.home() / ".cache" / "uv")

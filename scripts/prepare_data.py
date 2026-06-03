@@ -7,7 +7,13 @@ import argparse
 import os
 from pathlib import Path
 
-from neural_kv.data import build_mcq_examples, download_gutenberg_texts, load_hf_texts, write_jsonl
+from neural_kv.data import (
+    build_mcq_examples,
+    chunk_texts,
+    download_gutenberg_texts,
+    load_hf_texts,
+    write_jsonl,
+)
 from neural_kv.storage import check_storage_quota, default_storage_roots
 
 DEFAULT_GUTENBERG_IDS = [
@@ -47,6 +53,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--eval-docs", type=int, default=128)
     parser.add_argument("--questions-per-doc", type=int, default=2)
     parser.add_argument("--context-chars", type=int, default=12000)
+    parser.add_argument("--chunks-per-text", type=int, default=1)
+    parser.add_argument("--chunk-stride-chars", type=int, default=0)
     parser.add_argument("--seed", type=int, default=7)
     parser.add_argument("--max-storage", default="10TB")
     return parser.parse_args()
@@ -100,6 +108,25 @@ def main() -> None:
         validation_texts = eval_texts[: max(1, len(eval_texts) // 2)]
         test_texts = eval_texts[max(1, len(eval_texts) // 2) :]
         source_name = f"{args.dataset}/{args.dataset_config}"
+
+    train_texts = chunk_texts(
+        train_texts,
+        context_chars=args.context_chars,
+        chunks_per_text=args.chunks_per_text,
+        stride_chars=args.chunk_stride_chars,
+    )
+    validation_texts = chunk_texts(
+        validation_texts,
+        context_chars=args.context_chars,
+        chunks_per_text=args.chunks_per_text,
+        stride_chars=args.chunk_stride_chars,
+    )
+    test_texts = chunk_texts(
+        test_texts,
+        context_chars=args.context_chars,
+        chunks_per_text=args.chunks_per_text,
+        stride_chars=args.chunk_stride_chars,
+    )
 
     train_rows = build_mcq_examples(
         texts=train_texts,
