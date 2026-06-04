@@ -10,6 +10,7 @@ import torch.nn.functional as F
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from neural_kv.attention_bias import still_biases
+from neural_kv.cache import normalize_past_key_values
 from neural_kv.compactor import StillCompactor
 from neural_kv.data import answer_letter, format_mcq_prompt
 
@@ -631,6 +632,16 @@ def _attention_mask(prefix_length: int, input_length: int, *, device: str) -> to
     return torch.ones(1, prefix_length + input_length, device=device, dtype=torch.long)
 
 
+def _fresh_dynamic_cache(past_key_values):
+    """Wrap an existing cache in a fresh DynamicCache so HF update() cannot mutate it."""
+    if past_key_values is None:
+        return None
+    from transformers.cache_utils import DynamicCache
+
+    legacy = normalize_past_key_values(past_key_values)
+    return DynamicCache.from_legacy_cache(tuple((key, value) for key, value in legacy))
+
+
 def answer_token_logits(logits: torch.Tensor, prompt_len: int, target_len: int) -> torch.Tensor:
     start = prompt_len - 1
     end = start + target_len
@@ -778,7 +789,7 @@ def training_forward(
         full_outputs = model(input_ids=encoded.context_ids, use_cache=True)
         teacher_outputs = model(
             input_ids=model_inputs,
-            past_key_values=full_outputs.past_key_values,
+            past_key_values=_fresh_dynamic_cache(full_outputs.past_key_values),
             attention_mask=_attention_mask(source_tokens, model_inputs.shape[-1], device=device),
             position_ids=_position_ids(source_tokens, model_inputs.shape[-1], device=device),
             use_cache=False,
@@ -959,7 +970,7 @@ def trace_ce_scores(
     full_outputs = model(input_ids=encoded.context_ids, use_cache=True)
     teacher_outputs = model(
         input_ids=model_inputs,
-        past_key_values=full_outputs.past_key_values,
+        past_key_values=_fresh_dynamic_cache(full_outputs.past_key_values),
         attention_mask=_attention_mask(source_tokens, model_inputs.shape[-1], device=device),
         position_ids=_position_ids(source_tokens, model_inputs.shape[-1], device=device),
         use_cache=False,
@@ -1147,7 +1158,7 @@ def score_mcq_letters(
         if compact_cache is None:
             outputs = model(
                 input_ids=encoded.prompt_ids,
-                past_key_values=full_outputs.past_key_values,
+                past_key_values=_fresh_dynamic_cache(full_outputs.past_key_values),
                 attention_mask=_attention_mask(
                     source_tokens,
                     encoded.prompt_ids.shape[-1],
@@ -1213,7 +1224,7 @@ def score_mcq_letters(
             if compact_cache is None:
                 outputs = model(
                     input_ids=model_inputs,
-                    past_key_values=full_outputs.past_key_values,
+                    past_key_values=_fresh_dynamic_cache(full_outputs.past_key_values),
                     attention_mask=_attention_mask(
                         prefix_tokens,
                         model_inputs.shape[-1],
@@ -1297,7 +1308,7 @@ def _greedy_generate(
                 model,
                 biases,
                 input_ids=model_inputs,
-                past_key_values=past_key_values,
+                past_key_values=_fresh_dynamic_cache(past_key_values),
                 attention_mask=_attention_mask(
                     cache_tokens,
                     int(model_inputs.shape[-1]),

@@ -3,6 +3,7 @@ from types import SimpleNamespace
 
 from neural_kv.hf_training import (
     extract_answer_letter,
+    _fresh_dynamic_cache,
     kl_and_ce_loss,
     letter_kl_and_ce_loss,
     lexical_query_exact_token_indices,
@@ -60,6 +61,20 @@ def test_reverse_kl_loss_rewards_teacher_matching_distribution() -> None:
     )
 
     assert good_loss < bad_loss
+
+
+def test_fresh_dynamic_cache_update_does_not_mutate_original_cache() -> None:
+    from transformers.cache_utils import DynamicCache
+
+    key = torch.randn(1, 2, 3, 4)
+    value = torch.randn(1, 2, 3, 4)
+    original = DynamicCache.from_legacy_cache(((key, value),))
+    fresh = _fresh_dynamic_cache(original)
+
+    fresh.update(torch.randn(1, 2, 1, 4), torch.randn(1, 2, 1, 4), 0)
+
+    assert original.get_seq_length() == 3
+    assert fresh.get_seq_length() == 4
 
 
 def test_extract_answer_letter_prefers_explicit_tail_answer() -> None:
