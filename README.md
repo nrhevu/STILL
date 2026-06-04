@@ -74,6 +74,7 @@ Article-scale run:
   --context-length 8192 \
   --steps 2900 \
   --kl-weight 1.0 \
+  --reverse-kl-weight 0.0 \
   --ce-weight 0.1 \
   --output-dir checkpoints/qwen3_4b_8x \
   --max-storage 10TB
@@ -93,7 +94,7 @@ Target gate after an article-scale run:
 - Identity-style initialization so latents begin as position-local cache copies.
 - Learned per-layer/per-KV-head beta attention biases.
 - HF model patching via a context manager so beta can be added as an additive attention mask during student forwards.
-- KL teacher-student loss on answer tokens, with optional exact-answer CE.
+- KL teacher-student loss on answer tokens, optional reverse KL for bidirectional distillation, and optional exact-answer CE.
 - Storage quota checks for data and artifacts.
 - A deterministic public-data MCQ builder for train/test bootstrapping.
 

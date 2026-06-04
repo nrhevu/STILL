@@ -677,12 +677,19 @@ def kl_and_ce_loss(
     target_ids: torch.Tensor,
     kl_weight: float,
     ce_weight: float,
+    reverse_kl_weight: float = 0.0,
 ) -> torch.Tensor:
     loss = student_logits.new_tensor(0.0, dtype=torch.float32)
     if kl_weight > 0:
         teacher_prob = torch.softmax(teacher_logits.float(), dim=-1)
         student_log_prob = torch.log_softmax(student_logits.float(), dim=-1)
         loss = loss + kl_weight * F.kl_div(student_log_prob, teacher_prob, reduction="batchmean")
+    if reverse_kl_weight > 0:
+        teacher_log_prob = torch.log_softmax(teacher_logits.float(), dim=-1)
+        student_log_prob = torch.log_softmax(student_logits.float(), dim=-1)
+        student_prob = torch.softmax(student_logits.float(), dim=-1)
+        reverse_kl = (student_prob * (student_log_prob - teacher_log_prob)).sum(dim=-1).mean()
+        loss = loss + reverse_kl_weight * reverse_kl
     if ce_weight > 0:
         loss = loss + ce_weight * F.cross_entropy(
             student_logits.float(),
@@ -708,6 +715,7 @@ def letter_kl_and_ce_loss(
     target_index: int,
     kl_weight: float,
     ce_weight: float,
+    reverse_kl_weight: float = 0.0,
 ) -> torch.Tensor:
     """Distill the full-cache distribution over the four MCQ answer letters."""
     loss = student_logits.new_tensor(0.0, dtype=torch.float32)
@@ -715,6 +723,12 @@ def letter_kl_and_ce_loss(
         teacher_prob = torch.softmax(teacher_logits.float(), dim=-1)
         student_log_prob = torch.log_softmax(student_logits.float(), dim=-1)
         loss = loss + kl_weight * F.kl_div(student_log_prob, teacher_prob, reduction="batchmean")
+    if reverse_kl_weight > 0:
+        teacher_log_prob = torch.log_softmax(teacher_logits.float(), dim=-1)
+        student_log_prob = torch.log_softmax(student_logits.float(), dim=-1)
+        student_prob = torch.softmax(student_logits.float(), dim=-1)
+        reverse_kl = (student_prob * (student_log_prob - teacher_log_prob)).sum(dim=-1).mean()
+        loss = loss + reverse_kl_weight * reverse_kl
     if ce_weight > 0:
         target = torch.tensor([target_index], device=student_logits.device, dtype=torch.long)
         loss = loss + ce_weight * F.cross_entropy(
@@ -736,6 +750,7 @@ def training_forward(
     kl_weight: float,
     ce_weight: float,
     target_mode: str,
+    reverse_kl_weight: float = 0.0,
     loss_mode: str = "token",
     use_chat_template: bool = True,
     enable_thinking: bool = False,
@@ -821,6 +836,7 @@ def training_forward(
             target_ids=encoded.target_ids,
             kl_weight=kl_weight,
             ce_weight=ce_weight,
+            reverse_kl_weight=reverse_kl_weight,
         )
         gold_index = None
     else:
@@ -836,6 +852,7 @@ def training_forward(
             target_index=gold_index,
             kl_weight=kl_weight,
             ce_weight=ce_weight,
+            reverse_kl_weight=reverse_kl_weight,
         )
     with torch.no_grad():
         if loss_mode == "token":
@@ -845,6 +862,14 @@ def training_forward(
                 target_ids=encoded.target_ids,
                 kl_weight=1.0,
                 ce_weight=0.0,
+            )
+            reverse_kl = kl_and_ce_loss(
+                teacher_logits=teacher_logits,
+                student_logits=student_logits,
+                target_ids=encoded.target_ids,
+                kl_weight=0.0,
+                ce_weight=0.0,
+                reverse_kl_weight=1.0,
             )
             ce = kl_and_ce_loss(
                 teacher_logits=teacher_logits,
@@ -864,6 +889,14 @@ def training_forward(
                 kl_weight=1.0,
                 ce_weight=0.0,
             )
+            reverse_kl = letter_kl_and_ce_loss(
+                teacher_logits=teacher_logits,
+                student_logits=student_logits,
+                target_index=gold_index,
+                kl_weight=0.0,
+                ce_weight=0.0,
+                reverse_kl_weight=1.0,
+            )
             ce = letter_kl_and_ce_loss(
                 teacher_logits=teacher_logits,
                 student_logits=student_logits,
@@ -876,6 +909,7 @@ def training_forward(
             gold_prob = float(torch.softmax(student_logits.float(), dim=-1)[0, gold_index].cpu())
     metrics = {
         "kl": float(kl.detach().cpu()),
+        "reverse_kl": float(reverse_kl.detach().cpu()),
         "ce": float(ce.detach().cpu()),
         "loss_mode_letter": float(loss_mode == "letter"),
         "source_tokens": float(source_tokens),

@@ -85,6 +85,15 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--learning-rate", type=float, default=1e-4)
     parser.add_argument("--kl-weight", type=float, default=1.0)
+    parser.add_argument(
+        "--reverse-kl-weight",
+        type=float,
+        default=0.0,
+        help=(
+            "Optional D_KL(student || teacher) weight for bidirectional "
+            "distillation, inspired by KV-Distill-style objectives."
+        ),
+    )
     parser.add_argument("--ce-weight", type=float, default=0.1)
     parser.add_argument(
         "--aux-letter-loss-weight",
@@ -180,6 +189,7 @@ def save_checkpoint(
             "context_length": args.context_length,
             "batch_size": args.batch_size,
             "kl_weight": args.kl_weight,
+            "reverse_kl_weight": args.reverse_kl_weight,
             "ce_weight": args.ce_weight,
             "aux_letter_loss_weight": args.aux_letter_loss_weight,
             "aux_letter_enable_thinking": args.aux_letter_enable_thinking,
@@ -399,6 +409,8 @@ def main() -> None:
         raise ValueError("--batch-size must be positive")
     if args.aux_letter_loss_weight < 0:
         raise ValueError("--aux-letter-loss-weight must be non-negative")
+    if args.reverse_kl_weight < 0:
+        raise ValueError("--reverse-kl-weight must be non-negative")
     if args.balanced_answer_sampling:
         answer_groups: dict[str, list[int]] = {}
         for index, row in enumerate(train_rows):
@@ -434,6 +446,7 @@ def main() -> None:
                     device=device,
                     kl_weight=args.kl_weight,
                     ce_weight=args.ce_weight,
+                    reverse_kl_weight=args.reverse_kl_weight,
                     target_mode=args.target_mode,
                     loss_mode=args.loss_mode,
                     use_chat_template=not args.no_chat_template,
@@ -451,6 +464,7 @@ def main() -> None:
                         device=device,
                         kl_weight=args.kl_weight,
                         ce_weight=args.ce_weight,
+                        reverse_kl_weight=args.reverse_kl_weight,
                         target_mode="letter",
                         loss_mode="letter",
                         use_chat_template=not args.no_chat_template,
