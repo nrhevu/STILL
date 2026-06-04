@@ -34,6 +34,15 @@ def parse_args() -> argparse.Namespace:
         help="Skip this many input rows before generating traces.",
     )
     parser.add_argument(
+        "--end-index",
+        type=int,
+        default=0,
+        help=(
+            "Optional exclusive input row index for sharded generation. "
+            "For example, --start-index 500 --end-index 1000 emits rows [500, 1000)."
+        ),
+    )
+    parser.add_argument(
         "--append",
         action="store_true",
         help="Append traces to --output-file instead of overwriting it.",
@@ -126,7 +135,14 @@ def main() -> None:
     )
     if args.start_index < 0:
         raise ValueError("--start-index must be non-negative")
-    rows = read_jsonl(args.input_file, limit=(args.limit or None))[args.start_index :]
+    if args.end_index < 0:
+        raise ValueError("--end-index must be non-negative")
+    if args.end_index and args.end_index < args.start_index:
+        raise ValueError("--end-index must be greater than or equal to --start-index")
+    if args.end_index and args.limit and args.limit != args.end_index:
+        raise ValueError("--limit and --end-index both set; use only --end-index for shards")
+    row_limit = args.end_index or args.limit or None
+    rows = read_jsonl(args.input_file, limit=row_limit)[args.start_index :]
     output_path = Path(args.output_file)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
