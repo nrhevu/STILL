@@ -894,6 +894,129 @@ def training_forward(
 
 
 @torch.no_grad()
+def trace_ce_scores(
+    *,
+    model,
+    tokenizer,
+    compactor: StillCompactor,
+    row: dict[str, object],
+    context_length: int,
+    device: str,
+    use_chat_template: bool = True,
+    enable_thinking: bool = False,
+) -> dict[str, float]:
+    """Score teacher-response tokens with full, compact, and no-context caches."""
+    encoded = encode_mcq(
+        tokenizer,
+        row,
+        context_length=context_length,
+        device=device,
+        target_mode="teacher_response",
+        use_chat_template=use_chat_template,
+        enable_thinking=enable_thinking,
+    )
+    source_tokens = int(encoded.context_ids.shape[-1])
+    target_len = int(encoded.target_ids.shape[-1])
+    if target_len <= 0:
+        raise ValueError("teacher_response target must contain at least one token")
+
+    model_inputs = _continuation_inputs(encoded)
+    prompt_len = int(encoded.prompt_ids.shape[-1])
+    full_outputs = model(input_ids=encoded.context_ids, use_cache=True)
+    teacher_outputs = model(
+        input_ids=model_inputs,
+        past_key_values=full_outputs.past_key_values,
+        attention_mask=_attention_mask(source_tokens, model_inputs.shape[-1], device=device),
+        position_ids=_position_ids(source_tokens, model_inputs.shape[-1], device=device),
+        use_cache=False,
+    )
+    teacher_logits = answer_token_logits(teacher_outputs.logits, prompt_len, target_len).detach()
+    full_ce = kl_and_ce_loss(
+        teacher_logits=teacher_logits,
+        student_logits=teacher_logits,
+        target_ids=encoded.target_ids,
+        kl_weight=0.0,
+        ce_weight=1.0,
+    )
+
+    compact_cache = compactor(
+        full_outputs.past_key_values,
+        metadata={"source_tokens": source_tokens},
+        exact_token_indices=_exact_token_indices_for_compactor(
+            tokenizer,
+            row,
+            encoded,
+            compactor,
+            device=device,
+        ),
+    )
+    with still_biases(compact_cache.biases):
+        compact_outputs = model(
+            input_ids=model_inputs,
+            past_key_values=compact_cache.as_dynamic_cache(),
+            attention_mask=_attention_mask(
+                compact_cache.num_tokens,
+                model_inputs.shape[-1],
+                device=device,
+            ),
+            position_ids=_position_ids(source_tokens, model_inputs.shape[-1], device=device),
+            use_cache=False,
+        )
+    compact_logits = answer_token_logits(compact_outputs.logits, prompt_len, target_len)
+    compact_ce = kl_and_ce_loss(
+        teacher_logits=teacher_logits,
+        student_logits=compact_logits,
+        target_ids=encoded.target_ids,
+        kl_weight=0.0,
+        ce_weight=1.0,
+    )
+    compact_kl = kl_and_ce_loss(
+        teacher_logits=teacher_logits,
+        student_logits=compact_logits,
+        target_ids=encoded.target_ids,
+        kl_weight=1.0,
+        ce_weight=0.0,
+    )
+
+    no_context_prompt_ids, _ = _encode_no_context_prompt(
+        tokenizer,
+        row,
+        device=device,
+        use_chat_template=use_chat_template,
+        enable_thinking=enable_thinking,
+    )
+    no_context_inputs = (
+        no_context_prompt_ids
+        if target_len == 1
+        else torch.cat([no_context_prompt_ids, encoded.target_ids[:, :-1]], dim=-1)
+    )
+    no_context_outputs = model(input_ids=no_context_inputs, use_cache=False)
+    no_context_logits = answer_token_logits(
+        no_context_outputs.logits,
+        int(no_context_prompt_ids.shape[-1]),
+        target_len,
+    )
+    no_context_ce = kl_and_ce_loss(
+        teacher_logits=teacher_logits,
+        student_logits=no_context_logits,
+        target_ids=encoded.target_ids,
+        kl_weight=0.0,
+        ce_weight=1.0,
+    )
+    return {
+        "full_ce": float(full_ce.detach().cpu()),
+        "compact_ce": float(compact_ce.detach().cpu()),
+        "compact_kl": float(compact_kl.detach().cpu()),
+        "no_context_ce": float(no_context_ce.detach().cpu()),
+        "target_tokens": float(target_len),
+        "source_tokens": float(source_tokens),
+        "cache_tokens": float(compact_cache.num_tokens),
+        "compression": float(source_tokens / max(compact_cache.num_tokens, 1)),
+        "used_chat_template": float(encoded.used_chat_template),
+    }
+
+
+@torch.no_grad()
 def score_mcq_no_context(
     *,
     model,
