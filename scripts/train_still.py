@@ -163,7 +163,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--trainable-scope",
-        choices=["all", "beta", "heads", "beta_heads"],
+        choices=["all", "beta", "heads", "beta_heads", "latents", "latents_beta"],
         default="all",
         help="Restrict trainable compactor parameters for fine-tuning experiments.",
     )
@@ -431,6 +431,8 @@ def main() -> None:
         "beta": ("beta_head",),
         "heads": ("key_head", "value_head"),
         "beta_heads": ("beta_head", "key_head", "value_head"),
+        "latents": ("latents",),
+        "latents_beta": ("latents", "beta_head"),
     }[args.trainable_scope]
     trainable_parameters: list[torch.nn.Parameter] = []
     for name, parameter in compactor.named_parameters():
