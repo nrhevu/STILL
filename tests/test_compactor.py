@@ -77,6 +77,46 @@ def test_full_compactor_returns_cache() -> None:
     assert cache.metadata["source_tokens"] == 12
 
 
+def test_head_specific_latents_return_standard_cache_shape() -> None:
+    compactor = StillCompactor(
+        num_hidden_layers=1,
+        head_dim=4,
+        num_latents=3,
+        rope_theta=10000.0,
+        num_key_value_heads=2,
+        head_specific_latents=True,
+    )
+    keys = torch.randn(1, 2, 12, 4)
+    values = torch.randn(1, 2, 12, 4)
+
+    cache = compactor(((keys, values),))
+
+    assert compactor.layers[0].latents.shape == (2, 3, 8)
+    assert cache.keys[0].shape == (1, 2, 3, 4)
+    assert cache.values[0].shape == (1, 2, 3, 4)
+    assert cache.biases[0].shape == (1, 2, 3)
+
+
+def test_head_specific_latents_reject_wrong_head_count() -> None:
+    compactor = StillCompactor(
+        num_hidden_layers=1,
+        head_dim=4,
+        num_latents=3,
+        rope_theta=10000.0,
+        num_key_value_heads=2,
+        head_specific_latents=True,
+    )
+    keys = torch.randn(1, 3, 12, 4)
+    values = torch.randn(1, 3, 12, 4)
+
+    try:
+        compactor(((keys, values),))
+    except ValueError as exc:
+        assert "KV heads" in str(exc)
+    else:
+        raise AssertionError("expected wrong KV head count to fail")
+
+
 def test_full_compactor_can_prepend_exact_sink_tokens() -> None:
     compactor = StillCompactor(
         num_hidden_layers=1,

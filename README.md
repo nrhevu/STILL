@@ -71,6 +71,7 @@ Article-scale run:
   --train-file data/mcq/train.jsonl \
   --eval-file data/mcq/validation.jsonl \
   --num-latents 1024 \
+  --head-specific-latents \
   --context-length 8192 \
   --steps 2900 \
   --kl-weight 1.0 \
@@ -90,6 +91,7 @@ Target gate after an article-scale run:
 ## What Is Implemented
 
 - Per-layer STILL perceiver compactor.
+- Optional per-KV-head latent query tables to avoid forcing all KV heads through a shared latent basis.
 - RoPE-aware key unrotation, internal positional cross-attention, and compact-key re-rotation.
 - Identity-style initialization so latents begin as position-local cache copies.
 - Learned per-layer/per-KV-head beta attention biases.

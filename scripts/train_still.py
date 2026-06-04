@@ -67,6 +67,14 @@ def parse_args() -> argparse.Namespace:
         help="Number of shared depth compactor groups; 0 keeps one compactor per layer.",
     )
     parser.add_argument(
+        "--head-specific-latents",
+        action="store_true",
+        help=(
+            "Use a separate latent query table per KV head group instead of sharing "
+            "one table across heads."
+        ),
+    )
+    parser.add_argument(
         "--beta-base",
         choices=["zero", "log_compression"],
         default="zero",
@@ -185,6 +193,7 @@ def save_checkpoint(
             "exact_strategy": args.exact_strategy,
             "num_blocks": args.num_blocks,
             "layer_compactor_groups": args.layer_compactor_groups,
+            "head_specific_latents": args.head_specific_latents,
             "beta_base": args.beta_base,
             "context_length": args.context_length,
             "batch_size": args.batch_size,
@@ -209,6 +218,26 @@ def save_checkpoint(
         },
         path,
     )
+
+
+def expand_shared_latents_for_head_specific(
+    state_dict: dict[str, torch.Tensor],
+    target_state_dict: dict[str, torch.Tensor],
+) -> dict[str, torch.Tensor]:
+    """Expand older shared latent tables to the per-KV-head latent layout."""
+    expanded: dict[str, torch.Tensor] = {}
+    for key, value in state_dict.items():
+        target = target_state_dict.get(key)
+        if (
+            key.endswith(".latents")
+            and target is not None
+            and value.dim() == 2
+            and target.dim() == 3
+        ):
+            expanded[key] = value.unsqueeze(0).expand(target.shape[0], -1, -1).clone()
+        else:
+            expanded[key] = value
+    return expanded
 
 
 @torch.no_grad()
@@ -343,6 +372,7 @@ def main() -> None:
         latent_dropout=args.latent_dropout,
         beta_base=args.beta_base,
         layer_compactor_groups=args.layer_compactor_groups,
+        head_specific_latents=args.head_specific_latents,
     ).to(device)
     initial_step = 0
     if args.init_checkpoint:
@@ -365,6 +395,20 @@ def main() -> None:
             )
         if int(checkpoint.get("num_blocks", -1)) != args.num_blocks:
             raise ValueError("--init-checkpoint num_blocks does not match --num-blocks")
+        checkpoint_head_specific = bool(checkpoint.get("head_specific_latents", False))
+        state_dict = checkpoint["state_dict"]
+        if checkpoint_head_specific != args.head_specific_latents:
+            if args.head_specific_latents and not checkpoint_head_specific:
+                state_dict = expand_shared_latents_for_head_specific(
+                    state_dict,
+                    compactor.state_dict(),
+                )
+                print("expanded shared checkpoint latents to head-specific latent tables")
+            else:
+                raise ValueError(
+                    "--init-checkpoint head_specific_latents does not match "
+                    "--head-specific-latents"
+                )
         checkpoint_groups = int(checkpoint.get("layer_compactor_groups", 0))
         if checkpoint_groups != args.layer_compactor_groups:
             raise ValueError(
@@ -379,7 +423,7 @@ def main() -> None:
             )
         if int(checkpoint.get("context_length", -1)) != args.context_length:
             raise ValueError("--init-checkpoint context_length does not match --context-length")
-        compactor.load_state_dict(checkpoint["state_dict"])
+        compactor.load_state_dict(state_dict)
         initial_step = int(checkpoint.get("step", 0))
 
     trainable_keywords = {

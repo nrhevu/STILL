@@ -119,6 +119,8 @@ class StillLayerCompactor(nn.Module):
         num_blocks: int = 2,
         latent_dropout: float = 0.0,
         beta_base: str = "log_compression",
+        num_key_value_heads: int = 0,
+        head_specific_latents: bool = False,
     ) -> None:
         super().__init__()
         if num_blocks <= 0:
@@ -131,8 +133,17 @@ class StillLayerCompactor(nn.Module):
         self.rope_theta = float(rope_theta)
         self.latent_dropout = float(latent_dropout)
         self.beta_base = beta_base
+        self.head_specific_latents = bool(head_specific_latents)
+        self.num_key_value_heads = int(num_key_value_heads)
+        if self.head_specific_latents and self.num_key_value_heads <= 0:
+            raise ValueError("num_key_value_heads must be positive with head_specific_latents")
 
-        self.latents = nn.Parameter(torch.zeros(self.num_latents, self.latent_dim))
+        latent_shape = (
+            (self.num_key_value_heads, self.num_latents, self.latent_dim)
+            if self.head_specific_latents
+            else (self.num_latents, self.latent_dim)
+        )
+        self.latents = nn.Parameter(torch.zeros(*latent_shape))
         self.blocks = nn.ModuleList(
             [
                 PerceiverBlock(
@@ -170,6 +181,11 @@ class StillLayerCompactor(nn.Module):
         batch, heads, seq_len, head_dim = keys.shape
         if head_dim != self.head_dim:
             raise ValueError(f"expected head_dim={self.head_dim}, got {head_dim}")
+        if self.head_specific_latents and heads != self.num_key_value_heads:
+            raise ValueError(
+                f"expected {self.num_key_value_heads} KV heads for head-specific "
+                f"latents, got {heads}"
+            )
 
         dtype = keys.dtype
         module_dtype = self.key_head.weight.dtype
@@ -179,7 +195,15 @@ class StillLayerCompactor(nn.Module):
         unrotated_keys = apply_rope(keys, token_positions, theta=self.rope_theta, inverse=True)
         kv_input = torch.cat([unrotated_keys, values], dim=-1)
         kv_input = kv_input.reshape(batch * heads, seq_len, self.latent_dim).to(module_dtype)
-        latents = self.latents.unsqueeze(0).expand(batch * heads, -1, -1).to(module_dtype)
+        if self.head_specific_latents:
+            latents = (
+                self.latents.unsqueeze(0)
+                .expand(batch, heads, -1, -1)
+                .reshape(batch * heads, self.num_latents, self.latent_dim)
+                .to(module_dtype)
+            )
+        else:
+            latents = self.latents.unsqueeze(0).expand(batch * heads, -1, -1).to(module_dtype)
 
         if self.training and self.latent_dropout > 0:
             keep = torch.rand(latents.shape[:2], device=latents.device) >= self.latent_dropout
@@ -223,10 +247,16 @@ class StillCompactor(nn.Module):
         sink_tokens: int = 0,
         exact_tokens: int = 0,
         exact_strategy: str = "prefix",
+        num_key_value_heads: int = 0,
+        head_specific_latents: bool = False,
     ) -> None:
         super().__init__()
         self.num_hidden_layers = int(num_hidden_layers)
         self.num_latents = int(num_latents)
+        self.num_key_value_heads = int(num_key_value_heads)
+        self.head_specific_latents = bool(head_specific_latents)
+        if self.head_specific_latents and self.num_key_value_heads <= 0:
+            raise ValueError("num_key_value_heads must be positive with head_specific_latents")
         self.sink_tokens = int(sink_tokens)
         if self.sink_tokens < 0:
             raise ValueError("sink_tokens must be non-negative")
@@ -252,6 +282,8 @@ class StillCompactor(nn.Module):
                     num_blocks=num_blocks,
                     latent_dropout=latent_dropout,
                     beta_base=beta_base,
+                    num_key_value_heads=self.num_key_value_heads,
+                    head_specific_latents=self.head_specific_latents,
                 )
                 for _ in range(groups)
             ]
@@ -270,8 +302,10 @@ class StillCompactor(nn.Module):
         sink_tokens: int = 0,
         exact_tokens: int = 0,
         exact_strategy: str = "prefix",
+        head_specific_latents: bool = False,
     ) -> StillCompactor:
         head_dim = getattr(config, "head_dim", config.hidden_size // config.num_attention_heads)
+        num_key_value_heads = getattr(config, "num_key_value_heads", config.num_attention_heads)
         rope_theta = float(getattr(config, "rope_theta", 10000.0))
         return cls(
             num_hidden_layers=int(config.num_hidden_layers),
@@ -285,6 +319,8 @@ class StillCompactor(nn.Module):
             sink_tokens=sink_tokens,
             exact_tokens=exact_tokens,
             exact_strategy=exact_strategy,
+            num_key_value_heads=int(num_key_value_heads),
+            head_specific_latents=head_specific_latents,
         )
 
     def _layer_group_index(self, layer_index: int) -> int:
