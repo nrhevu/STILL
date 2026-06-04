@@ -98,6 +98,58 @@ def test_full_compactor_can_prepend_exact_sink_tokens() -> None:
     assert cache.metadata["latent_tokens"] == 4
 
 
+def test_full_compactor_can_prepend_even_exact_tokens_after_sink() -> None:
+    compactor = StillCompactor(
+        num_hidden_layers=1,
+        head_dim=2,
+        num_latents=2,
+        rope_theta=10000.0,
+        sink_tokens=1,
+        exact_tokens=3,
+        exact_strategy="even",
+    )
+    keys = torch.arange(1 * 1 * 10 * 2, dtype=torch.float32).reshape(1, 1, 10, 2)
+    values = keys + 100.0
+
+    cache = compactor(((keys, values),))
+
+    assert cache.num_tokens == 6
+    assert torch.allclose(cache.keys[0][..., :1, :], keys[..., :1, :])
+    assert torch.allclose(cache.keys[0][..., 1:4, :], keys[..., [1, 5, 9], :])
+    assert torch.allclose(cache.values[0][..., 1:4, :], values[..., [1, 5, 9], :])
+    assert torch.allclose(cache.biases[0][..., :4], torch.zeros_like(cache.biases[0][..., :4]))
+    assert cache.metadata["sink_tokens"] == 1
+    assert cache.metadata["exact_tokens"] == 3
+    assert cache.metadata["exact_strategy"] == "even"
+    assert cache.metadata["latent_tokens"] == 2
+
+
+def test_full_compactor_can_select_kv_norm_exact_tokens_per_head() -> None:
+    compactor = StillCompactor(
+        num_hidden_layers=1,
+        head_dim=2,
+        num_latents=1,
+        rope_theta=10000.0,
+        exact_tokens=2,
+        exact_strategy="kv_norm",
+    )
+    keys = torch.zeros(1, 2, 5, 2)
+    values = torch.zeros_like(keys)
+    keys[0, 0, 3, 0] = 10.0
+    values[0, 0, 1, 0] = 9.0
+    keys[0, 1, 4, 0] = 8.0
+    values[0, 1, 2, 0] = 7.0
+
+    cache = compactor(((keys, values),))
+
+    assert cache.num_tokens == 3
+    assert torch.allclose(cache.keys[0][0, 0, :2], keys[0, 0, [1, 3]])
+    assert torch.allclose(cache.values[0][0, 0, :2], values[0, 0, [1, 3]])
+    assert torch.allclose(cache.keys[0][0, 1, :2], keys[0, 1, [2, 4]])
+    assert torch.allclose(cache.values[0][0, 1, :2], values[0, 1, [2, 4]])
+    assert torch.allclose(cache.biases[0][..., :2], torch.zeros_like(cache.biases[0][..., :2]))
+
+
 def test_grouped_compactor_reuses_depth_groups() -> None:
     compactor = StillCompactor(
         num_hidden_layers=4,

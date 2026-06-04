@@ -671,7 +671,7 @@ def training_forward(
         metadata={
             "source_tokens": source_tokens,
             "target_compression": source_tokens
-            / (compactor.num_latents + getattr(compactor, "sink_tokens", 0)),
+            / max(getattr(compactor, "compact_tokens_per_layer", compactor.num_latents), 1),
         },
     )
     with still_biases(compact_cache.biases):

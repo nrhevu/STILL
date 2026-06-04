@@ -14,7 +14,7 @@ from torch.optim import AdamW
 from tqdm import tqdm
 
 from neural_kv.attention_bias import enable_still_attention_bias
-from neural_kv.compactor import StillCompactor
+from neural_kv.compactor import EXACT_TOKEN_STRATEGIES, StillCompactor
 from neural_kv.data import answer_letter, read_jsonl
 from neural_kv.hf_training import (
     dtype_from_name,
@@ -46,6 +46,18 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=0,
         help="Exact prefix KV tokens to prepend to the learned latent cache.",
+    )
+    parser.add_argument(
+        "--exact-tokens",
+        type=int,
+        default=0,
+        help="Additional exact KV tokens to prepend before learned latent slots.",
+    )
+    parser.add_argument(
+        "--exact-strategy",
+        choices=sorted(EXACT_TOKEN_STRATEGIES),
+        default="prefix",
+        help="Selection strategy for --exact-tokens.",
     )
     parser.add_argument("--num-blocks", type=int, default=2)
     parser.add_argument(
@@ -160,6 +172,8 @@ def save_checkpoint(
             "model": args.model,
             "num_latents": args.num_latents,
             "sink_tokens": args.sink_tokens,
+            "exact_tokens": args.exact_tokens,
+            "exact_strategy": args.exact_strategy,
             "num_blocks": args.num_blocks,
             "layer_compactor_groups": args.layer_compactor_groups,
             "beta_base": args.beta_base,
@@ -313,6 +327,8 @@ def main() -> None:
         model.config,
         num_latents=args.num_latents,
         sink_tokens=args.sink_tokens,
+        exact_tokens=args.exact_tokens,
+        exact_strategy=args.exact_strategy,
         num_blocks=args.num_blocks,
         latent_dropout=args.latent_dropout,
         beta_base=args.beta_base,
@@ -329,6 +345,14 @@ def main() -> None:
             raise ValueError("--init-checkpoint num_latents does not match --num-latents")
         if int(checkpoint.get("sink_tokens", 0)) != args.sink_tokens:
             raise ValueError("--init-checkpoint sink_tokens does not match --sink-tokens")
+        if int(checkpoint.get("exact_tokens", 0)) != args.exact_tokens:
+            raise ValueError("--init-checkpoint exact_tokens does not match --exact-tokens")
+        checkpoint_exact_strategy = str(checkpoint.get("exact_strategy", "prefix"))
+        if checkpoint_exact_strategy != args.exact_strategy:
+            raise ValueError(
+                f"--init-checkpoint exact_strategy {checkpoint_exact_strategy!r} "
+                f"does not match --exact-strategy {args.exact_strategy!r}"
+            )
         if int(checkpoint.get("num_blocks", -1)) != args.num_blocks:
             raise ValueError("--init-checkpoint num_blocks does not match --num-blocks")
         checkpoint_groups = int(checkpoint.get("layer_compactor_groups", 0))

@@ -10,6 +10,8 @@ from torch import nn
 from neural_kv.cache import CompactKVCache, normalize_past_key_values
 from neural_kv.rope import apply_rope, evenly_spaced_positions
 
+EXACT_TOKEN_STRATEGIES = {"prefix", "even", "kv_norm"}
+
 
 class LatentSelfAttention(nn.Module):
     """Self-attention over compact latent slots."""
@@ -219,6 +221,8 @@ class StillCompactor(nn.Module):
         beta_base: str = "log_compression",
         layer_compactor_groups: int = 0,
         sink_tokens: int = 0,
+        exact_tokens: int = 0,
+        exact_strategy: str = "prefix",
     ) -> None:
         super().__init__()
         self.num_hidden_layers = int(num_hidden_layers)
@@ -226,6 +230,12 @@ class StillCompactor(nn.Module):
         self.sink_tokens = int(sink_tokens)
         if self.sink_tokens < 0:
             raise ValueError("sink_tokens must be non-negative")
+        self.exact_tokens = int(exact_tokens)
+        if self.exact_tokens < 0:
+            raise ValueError("exact_tokens must be non-negative")
+        if exact_strategy not in EXACT_TOKEN_STRATEGIES:
+            raise ValueError(f"exact_strategy must be one of {sorted(EXACT_TOKEN_STRATEGIES)}")
+        self.exact_strategy = exact_strategy
         groups = int(layer_compactor_groups or self.num_hidden_layers)
         if groups <= 0:
             raise ValueError("layer_compactor_groups must be positive or 0 for per-layer")
@@ -258,6 +268,8 @@ class StillCompactor(nn.Module):
         beta_base: str = "log_compression",
         layer_compactor_groups: int = 0,
         sink_tokens: int = 0,
+        exact_tokens: int = 0,
+        exact_strategy: str = "prefix",
     ) -> StillCompactor:
         head_dim = getattr(config, "head_dim", config.hidden_size // config.num_attention_heads)
         rope_theta = float(getattr(config, "rope_theta", 10000.0))
@@ -271,12 +283,79 @@ class StillCompactor(nn.Module):
             beta_base=beta_base,
             layer_compactor_groups=layer_compactor_groups,
             sink_tokens=sink_tokens,
+            exact_tokens=exact_tokens,
+            exact_strategy=exact_strategy,
         )
 
     def _layer_group_index(self, layer_index: int) -> int:
         if self.layer_compactor_groups == self.num_hidden_layers:
             return layer_index
         return (layer_index * self.layer_compactor_groups) // self.num_hidden_layers
+
+    @property
+    def compact_tokens_per_layer(self) -> int:
+        return self.sink_tokens + self.exact_tokens + self.num_latents
+
+    def _exact_indices(
+        self,
+        layer_keys: torch.Tensor,
+        layer_values: torch.Tensor,
+        *,
+        sink_count: int,
+    ) -> torch.Tensor | None:
+        if self.exact_tokens == 0:
+            return None
+        seq_len = int(layer_keys.shape[-2])
+        available = seq_len - sink_count
+        if available <= 0:
+            return None
+        exact_count = min(self.exact_tokens, available)
+        device = layer_keys.device
+        if self.exact_strategy == "prefix":
+            return torch.arange(
+                sink_count,
+                sink_count + exact_count,
+                device=device,
+                dtype=torch.long,
+            )
+        if self.exact_strategy == "even":
+            if exact_count == available:
+                return torch.arange(sink_count, seq_len, device=device, dtype=torch.long)
+            return torch.linspace(
+                sink_count,
+                seq_len - 1,
+                exact_count,
+                device=device,
+            ).round().long()
+        if self.exact_strategy == "kv_norm":
+            scores = layer_keys.float().square().sum(dim=-1)
+            scores = scores + layer_values.float().square().sum(dim=-1)
+            if sink_count:
+                scores = scores.clone()
+                scores[..., :sink_count] = -torch.inf
+            indices = torch.topk(scores, k=exact_count, dim=-1).indices
+            return indices.sort(dim=-1).values
+        raise ValueError(f"Unsupported exact_strategy: {self.exact_strategy}")
+
+    @staticmethod
+    def _gather_exact_tokens(tensor: torch.Tensor, indices: torch.Tensor) -> torch.Tensor:
+        if indices.dim() == 1:
+            gather_index = indices.view(1, 1, -1, 1).expand(
+                tensor.shape[0],
+                tensor.shape[1],
+                -1,
+                tensor.shape[-1],
+            )
+        elif indices.dim() == 3:
+            gather_index = indices.unsqueeze(-1).expand(
+                -1,
+                -1,
+                -1,
+                tensor.shape[-1],
+            )
+        else:
+            raise ValueError("exact token indices must be rank 1 or 3")
+        return torch.gather(tensor, dim=-2, index=gather_index)
 
     def forward(
         self,
@@ -295,6 +374,7 @@ class StillCompactor(nn.Module):
         for layer_index, (layer_keys, layer_values) in enumerate(normalized):
             layer_compactor = self.layers[self._layer_group_index(layer_index)]
             compact_k, compact_v, beta = layer_compactor(layer_keys, layer_values)
+            sink_count = 0
             if self.sink_tokens:
                 sink_count = min(self.sink_tokens, int(layer_keys.shape[-2]))
                 if sink_count > 0:
@@ -304,12 +384,43 @@ class StillCompactor(nn.Module):
                     compact_k = torch.cat([sink_k, compact_k], dim=-2)
                     compact_v = torch.cat([sink_v, compact_v], dim=-2)
                     beta = torch.cat([sink_beta, beta], dim=-1)
+            exact_indices = self._exact_indices(
+                layer_keys,
+                layer_values,
+                sink_count=sink_count,
+            )
+            if exact_indices is not None:
+                exact_k = self._gather_exact_tokens(layer_keys, exact_indices)
+                exact_v = self._gather_exact_tokens(layer_values, exact_indices)
+                exact_beta = beta.new_zeros(*exact_k.shape[:-1])
+                prefix_tokens = sink_count
+                if prefix_tokens:
+                    compact_k = torch.cat(
+                        [compact_k[..., :prefix_tokens, :], exact_k, compact_k[..., prefix_tokens:, :]],
+                        dim=-2,
+                    )
+                    compact_v = torch.cat(
+                        [compact_v[..., :prefix_tokens, :], exact_v, compact_v[..., prefix_tokens:, :]],
+                        dim=-2,
+                    )
+                    beta = torch.cat(
+                        [beta[..., :prefix_tokens], exact_beta, beta[..., prefix_tokens:]],
+                        dim=-1,
+                    )
+                else:
+                    compact_k = torch.cat([exact_k, compact_k], dim=-2)
+                    compact_v = torch.cat([exact_v, compact_v], dim=-2)
+                    beta = torch.cat([exact_beta, beta], dim=-1)
             keys.append(compact_k)
             values.append(compact_v)
             biases.append(beta)
         output_metadata = dict(metadata or {})
         if self.sink_tokens:
             output_metadata["sink_tokens"] = self.sink_tokens
+        if self.exact_tokens:
+            output_metadata["exact_tokens"] = self.exact_tokens
+            output_metadata["exact_strategy"] = self.exact_strategy
+        if self.sink_tokens or self.exact_tokens:
             output_metadata["latent_tokens"] = self.num_latents
         return CompactKVCache(
             keys=keys,
