@@ -36,6 +36,24 @@ ANSWER_PATTERN = re.compile(
     re.IGNORECASE,
 )
 TAIL_LETTER_PATTERN = re.compile(r"(?:^|[^A-Za-z])([ABCD])(?:[^A-Za-z]|$)")
+QUERY_TOKEN_PATTERN = re.compile(r"[A-Za-z0-9]+")
+QUERY_STOPWORDS = {
+    "a",
+    "and",
+    "concept",
+    "for",
+    "form",
+    "fiscal",
+    "is",
+    "of",
+    "period",
+    "reported",
+    "the",
+    "unit",
+    "value",
+    "what",
+    "year",
+}
 
 
 def system_context_prompt(context: str, *, enable_thinking: bool = False) -> str:
@@ -58,6 +76,108 @@ def extract_answer_letter(text: str) -> str | None:
     if tail_matches:
         return tail_matches[-1].group(1).upper()
     return None
+
+
+def _query_terms(text: str) -> set[str]:
+    return {
+        token.lower()
+        for token in QUERY_TOKEN_PATTERN.findall(text)
+        if len(token) > 1 and token.lower() not in QUERY_STOPWORDS
+    }
+
+
+def _line_query_score(*, line: str, terms: set[str]) -> tuple[int, int]:
+    line_terms = _query_terms(line)
+    overlap = terms & line_terms
+    rareish = sum(1 for token in overlap if any(char.isdigit() for char in token) or len(token) > 4)
+    return len(overlap), rareish
+
+
+def _find_subsequence(haystack: list[int], needle: list[int]) -> int:
+    if not needle or len(needle) > len(haystack):
+        return -1
+    first = needle[0]
+    limit = len(haystack) - len(needle) + 1
+    for index in range(limit):
+        if haystack[index] == first and haystack[index : index + len(needle)] == needle:
+            return index
+    return -1
+
+
+def lexical_query_exact_token_indices(
+    tokenizer,
+    row: dict[str, object],
+    context_ids: torch.Tensor,
+    *,
+    max_tokens: int,
+    device: str,
+) -> torch.Tensor | None:
+    """Select exact context-token indices from lines that lexically match the query."""
+    if max_tokens <= 0:
+        return None
+    terms = _query_terms(str(row.get("question", "")))
+    if not terms:
+        return None
+    scored_lines: list[tuple[tuple[int, int], int, str]] = []
+    for line_index, line in enumerate(str(row.get("context", "")).splitlines()):
+        stripped = line.strip()
+        if not stripped:
+            continue
+        score = _line_query_score(line=stripped, terms=terms)
+        if score[0] > 0:
+            scored_lines.append((score, -line_index, stripped))
+    if not scored_lines:
+        return None
+    scored_lines.sort(reverse=True)
+
+    haystack = [int(item) for item in context_ids.reshape(-1).tolist()]
+    selected: list[int] = []
+    seen: set[int] = set()
+    for _, _, line in scored_lines:
+        variants = [line, "\n" + line, line + "\n", "\n" + line + "\n"]
+        found_start = -1
+        found_ids: list[int] = []
+        for variant in variants:
+            candidate_ids = tokenizer(
+                variant,
+                add_special_tokens=False,
+            ).input_ids
+            if not candidate_ids:
+                continue
+            found_start = _find_subsequence(haystack, [int(item) for item in candidate_ids])
+            if found_start >= 0:
+                found_ids = [int(item) for item in candidate_ids]
+                break
+        if found_start < 0:
+            continue
+        for position in range(found_start, found_start + len(found_ids)):
+            if position not in seen:
+                selected.append(position)
+                seen.add(position)
+                if len(selected) >= max_tokens:
+                    return torch.tensor(selected, device=device, dtype=torch.long)
+    if not selected:
+        return None
+    return torch.tensor(selected, device=device, dtype=torch.long)
+
+
+def _exact_token_indices_for_compactor(
+    tokenizer,
+    row: dict[str, object],
+    encoded: EncodedMCQ,
+    compactor: StillCompactor,
+    *,
+    device: str,
+) -> torch.Tensor | None:
+    if getattr(compactor, "exact_strategy", "") != "lexical":
+        return None
+    return lexical_query_exact_token_indices(
+        tokenizer,
+        row,
+        encoded.context_ids,
+        max_tokens=int(getattr(compactor, "exact_tokens", 0)),
+        device=device,
+    )
 
 
 def dtype_from_name(name: str) -> torch.dtype:
@@ -673,6 +793,13 @@ def training_forward(
             "target_compression": source_tokens
             / max(getattr(compactor, "compact_tokens_per_layer", compactor.num_latents), 1),
         },
+        exact_token_indices=_exact_token_indices_for_compactor(
+            tokenizer,
+            row,
+            encoded,
+            compactor,
+            device=device,
+        ),
     )
     with still_biases(compact_cache.biases):
         student_outputs = model(
@@ -844,6 +971,13 @@ def score_mcq_letters(
         compact_cache = compactor(
             full_outputs.past_key_values,
             metadata={"source_tokens": source_tokens},
+            exact_token_indices=_exact_token_indices_for_compactor(
+                tokenizer,
+                row,
+                encoded,
+                compactor,
+                device=device,
+            ),
         )
         cache_tokens = compact_cache.num_tokens
 
@@ -1123,6 +1257,13 @@ def generate_mcq_answer(
         compact_cache = compactor(
             full_outputs.past_key_values,
             metadata={"source_tokens": source_tokens},
+            exact_token_indices=_exact_token_indices_for_compactor(
+                tokenizer,
+                row,
+                encoded,
+                compactor,
+                device=device,
+            ),
         )
         past_key_values = compact_cache.as_dynamic_cache()
         cache_tokens = compact_cache.num_tokens

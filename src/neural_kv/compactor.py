@@ -10,7 +10,7 @@ from torch import nn
 from neural_kv.cache import CompactKVCache, normalize_past_key_values
 from neural_kv.rope import apply_rope, evenly_spaced_positions
 
-EXACT_TOKEN_STRATEGIES = {"prefix", "even", "kv_norm"}
+EXACT_TOKEN_STRATEGIES = {"prefix", "even", "kv_norm", "lexical"}
 
 
 class LatentSelfAttention(nn.Module):
@@ -302,6 +302,7 @@ class StillCompactor(nn.Module):
         layer_values: torch.Tensor,
         *,
         sink_count: int,
+        explicit_indices: torch.Tensor | None = None,
     ) -> torch.Tensor | None:
         if self.exact_tokens == 0:
             return None
@@ -310,6 +311,17 @@ class StillCompactor(nn.Module):
         if available <= 0:
             return None
         exact_count = min(self.exact_tokens, available)
+        if explicit_indices is not None:
+            indices = explicit_indices.to(device=layer_keys.device, dtype=torch.long)
+            if indices.dim() == 1:
+                indices = indices[(indices >= sink_count) & (indices < seq_len)]
+                if indices.numel() == 0:
+                    return None
+                return indices.unique(sorted=True)[:exact_count]
+            if indices.dim() == 3:
+                indices = indices.clamp(min=sink_count, max=seq_len - 1)
+                return indices[..., :exact_count].sort(dim=-1).values
+            raise ValueError("explicit exact token indices must be rank 1 or 3")
         device = layer_keys.device
         if self.exact_strategy == "prefix":
             return torch.arange(
@@ -335,6 +347,8 @@ class StillCompactor(nn.Module):
                 scores[..., :sink_count] = -torch.inf
             indices = torch.topk(scores, k=exact_count, dim=-1).indices
             return indices.sort(dim=-1).values
+        if self.exact_strategy == "lexical":
+            return None
         raise ValueError(f"Unsupported exact_strategy: {self.exact_strategy}")
 
     @staticmethod
@@ -362,6 +376,7 @@ class StillCompactor(nn.Module):
         past_key_values,
         *,
         metadata: dict[str, object] | None = None,
+        exact_token_indices: torch.Tensor | list[torch.Tensor] | None = None,
     ) -> CompactKVCache:
         normalized = normalize_past_key_values(past_key_values)
         if len(normalized) != self.num_hidden_layers:
@@ -384,10 +399,16 @@ class StillCompactor(nn.Module):
                     compact_k = torch.cat([sink_k, compact_k], dim=-2)
                     compact_v = torch.cat([sink_v, compact_v], dim=-2)
                     beta = torch.cat([sink_beta, beta], dim=-1)
+            explicit_indices = None
+            if isinstance(exact_token_indices, list):
+                explicit_indices = exact_token_indices[layer_index]
+            elif exact_token_indices is not None:
+                explicit_indices = exact_token_indices
             exact_indices = self._exact_indices(
                 layer_keys,
                 layer_values,
                 sink_count=sink_count,
+                explicit_indices=explicit_indices,
             )
             if exact_indices is not None:
                 exact_k = self._gather_exact_tokens(layer_keys, exact_indices)

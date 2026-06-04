@@ -1,6 +1,16 @@
 import torch
+from types import SimpleNamespace
 
-from neural_kv.hf_training import extract_answer_letter, letter_kl_and_ce_loss
+from neural_kv.hf_training import (
+    extract_answer_letter,
+    letter_kl_and_ce_loss,
+    lexical_query_exact_token_indices,
+)
+
+
+class CharTokenizer:
+    def __call__(self, text: str, *, add_special_tokens: bool = False):
+        return SimpleNamespace(input_ids=[ord(char) for char in text])
 
 
 def test_letter_kl_and_ce_loss_rewards_gold_letter() -> None:
@@ -34,3 +44,33 @@ def test_extract_answer_letter_prefers_explicit_tail_answer() -> None:
 
 def test_extract_answer_letter_accepts_final_standalone_letter() -> None:
     assert extract_answer_letter("After checking the context, the answer is\nD\n") == "D"
+
+
+def test_lexical_query_exact_token_indices_selects_matching_context_line() -> None:
+    context = "\n".join(
+        [
+            "Company: Microsoft Corp. | Concept: Revenue | Fiscal year: 2024 | Period: FY | Unit: USD | Value: 456",
+            "Company: Apple Inc. | Concept: Revenue | Fiscal year: 2024 | Period: FY | Unit: USD | Value: 123",
+        ]
+    )
+    row = {
+        "context": context,
+        "question": (
+            "For Apple Inc., concept Revenue, fiscal year 2024, period FY, "
+            "unit USD, what is the reported value?"
+        ),
+    }
+    context_ids = torch.tensor([[ord(char) for char in context]])
+
+    indices = lexical_query_exact_token_indices(
+        CharTokenizer(),
+        row,
+        context_ids,
+        max_tokens=128,
+        device="cpu",
+    )
+
+    assert indices is not None
+    selected = "".join(chr(int(context_ids[0, index])) for index in indices.tolist())
+    assert "Apple Inc." in selected
+    assert "Value: 123" in selected

@@ -150,6 +150,26 @@ def test_full_compactor_can_select_kv_norm_exact_tokens_per_head() -> None:
     assert torch.allclose(cache.biases[0][..., :2], torch.zeros_like(cache.biases[0][..., :2]))
 
 
+def test_full_compactor_accepts_explicit_lexical_exact_indices() -> None:
+    compactor = StillCompactor(
+        num_hidden_layers=1,
+        head_dim=2,
+        num_latents=1,
+        rope_theta=10000.0,
+        exact_tokens=2,
+        exact_strategy="lexical",
+    )
+    keys = torch.arange(1 * 1 * 6 * 2, dtype=torch.float32).reshape(1, 1, 6, 2)
+    values = keys + 100.0
+
+    cache = compactor(((keys, values),), exact_token_indices=torch.tensor([4, 1, 3]))
+
+    assert cache.num_tokens == 3
+    assert torch.allclose(cache.keys[0][..., :2, :], keys[..., [1, 3], :])
+    assert torch.allclose(cache.values[0][..., :2, :], values[..., [1, 3], :])
+    assert cache.metadata["exact_strategy"] == "lexical"
+
+
 def test_grouped_compactor_reuses_depth_groups() -> None:
     compactor = StillCompactor(
         num_hidden_layers=4,
