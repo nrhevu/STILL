@@ -4,6 +4,8 @@ This branch implements a uv-managed scaffold for Baseten's STILL idea: compress 
 
 The article target is Qwen3-4B, 8192-token contexts, 1024 compact latents, about 8x KV compression, and roughly 85%+ extractive MCQ accuracy with CE utilization above 0.90. The code exposes that configuration, but reproducing those numbers needs a real GPU training run and the full generated MCQ dataset scale. The default scripts use smaller public data slices for smoke tests and iteration.
 
+For the detailed model and training procedure, see [docs/model_and_training.md](docs/model_and_training.md).
+
 Sources used for the implementation direction:
 
 - Baseten Research, "Towards infinite context windows: neural KV cache compaction" (April 1, 2026).

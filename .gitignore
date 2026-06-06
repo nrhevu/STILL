@@ -19,6 +19,7 @@ data/sec_facts/
 checkpoints/
 artifacts/
 outputs/
+data/
 
 *.pt
 *.pth
