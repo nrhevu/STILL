@@ -50,6 +50,96 @@ The data preparation script defaults to downloading a bounded public-domain Proj
 
 The generated JSONL files are ignored by git because they can be regenerated and may become large.
 
+## Validate A Hugging Face Checkpoint
+
+Use this path to validate the best SEC 6k checkpoint downloaded from Hugging Face.
+The validation command uses ROCm through `scripts/rocm_docker_run.sh`; PyTorch
+still sees AMD GPUs as `cuda`.
+
+First, create the SEC validation split. If `data/sec_facts_random_visible_6k/validation.jsonl`
+already exists, this step can be skipped. The script writes all split files, so
+the train/test counts below are kept at one row to minimize validation-only
+storage while preserving the 600-row validation split.
+
+```bash
+.uv-bootstrap/bin/uv run python scripts/prepare_sec_facts_mcq.py \
+  --output-dir data/sec_facts_random_visible_6k \
+  --raw-dir data/sec_facts/raw \
+  --context-chars 50000 \
+  --train-rows 1 \
+  --validation-rows 600 \
+  --test-rows 1 \
+  --target-placement random_visible \
+  --visible-target-chars 22000 \
+  --max-storage 10TB \
+  --user-agent "neural-kv-compressor validation contact@example.com"
+```
+
+Set the Hugging Face repo that contains `step_800.pt`. For the default private
+repo created by the upload helper, the repo name is
+`<hf-user>/neural-kv-compressor-qwen3-4b-sec-6k-best`.
+
+```bash
+export HF_REPO_ID="<hf-user>/neural-kv-compressor-qwen3-4b-sec-6k-best"
+export HF_CHECKPOINT_DIR="checkpoints/hf_qwen3_4b_sec_6k_best"
+read -rsp "HF token: " HF_TOKEN; echo
+export HF_TOKEN
+```
+
+Download the checkpoint into the project checkpoint directory:
+
+```bash
+mkdir -p "$HF_CHECKPOINT_DIR"
+.uv-bootstrap/bin/uv run python - <<'PY_HF_DOWNLOAD'
+import os
+from huggingface_hub import hf_hub_download
+
+path = hf_hub_download(
+    repo_id=os.environ["HF_REPO_ID"],
+    filename="step_800.pt",
+    repo_type="model",
+    local_dir=os.environ["HF_CHECKPOINT_DIR"],
+    token=os.environ.get("HF_TOKEN"),
+)
+print(path)
+PY_HF_DOWNLOAD
+```
+
+If the base model is not already cached in `data/hf_cache`, download it before
+entering the ROCm container. This keeps the model cache project-local and under
+the same `10TB` storage check.
+
+```bash
+HF_HOME=data/hf_cache .uv-bootstrap/bin/uv run python scripts/download_model.py \
+  --model Qwen/Qwen3-4B \
+  --max-storage 10TB
+```
+
+After the Hugging Face downloads finish, remove the token from the shell:
+
+```bash
+unset HF_TOKEN
+```
+
+Run the 600-row MCQ validation. Do not pass `--enable-thinking`; this matches
+the validation path used in the completed report.
+
+```bash
+HIP_VISIBLE_DEVICES=0 scripts/rocm_docker_run.sh python scripts/evaluate_checkpoint.py \
+  --checkpoint "$HF_CHECKPOINT_DIR/step_800.pt" \
+  --eval-file data/sec_facts_random_visible_6k/validation.jsonl \
+  --limit 600 \
+  --score-mode letter \
+  --device cuda \
+  --dtype bfloat16 \
+  --max-storage 10TB
+```
+
+The completed SEC 6k report measured `step_800.pt` at `0.966667` compact
+validation accuracy, `0.996667` full-cache validation accuracy, and `8.0x`
+compression. See `reports/performance_2026-06-08_6k_rocm.md` for the full
+validation/test report.
+
 ## Train
 
 Small smoke run:
