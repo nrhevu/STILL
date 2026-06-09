@@ -324,6 +324,213 @@ HIP_VISIBLE_DEVICES=0 scripts/rocm_docker_run.sh python scripts/train_still.py \
   --max-storage 10TB
 ```
 
+## Reproduce The Completed 6k ROCm Run
+
+The completed high-performing run uses SEC companyfacts data. Raw SEC JSON is
+downloaded or reused under:
+
+```text
+data/sec_facts/raw/
+```
+
+The processed 6k benchmark lives under:
+
+```text
+data/sec_facts_random_visible_6k/
+```
+
+The model and runtime caches are project-local and counted by the storage
+checks:
+
+```text
+data/hf_cache/
+data/uv_cache/
+data/torchinductor_cache/
+data/comgr_cache/
+```
+
+Build the 6k train/validation/test split:
+
+```bash
+.uv-bootstrap/bin/uv run python scripts/prepare_sec_facts_mcq.py \
+  --output-dir data/sec_facts_random_visible_6k \
+  --raw-dir data/sec_facts/raw \
+  --context-chars 50000 \
+  --train-rows 6000 \
+  --validation-rows 600 \
+  --test-rows 600 \
+  --target-placement random_visible \
+  --visible-target-chars 22000 \
+  --max-storage 10TB \
+  --user-agent "neural-kv-compressor research contact@example.com"
+```
+
+Generate train teacher-response traces. The command below runs 16 shards in two
+8-GPU waves. If fewer GPUs are available, run the same shard command manually
+with different `--start-index` and `--end-index` ranges. In the completed run,
+the first 3,000 trace rows were reused from
+`data/sec_facts_random_visible_3k/train_traces_3000_512.jsonl`; the commands
+below generate all 6,000 rows from scratch.
+
+```bash
+for shard in $(seq 0 7); do
+  start=$((shard * 375))
+  end=$((start + 375))
+  gpu=$shard
+  HIP_VISIBLE_DEVICES=$gpu scripts/rocm_docker_run.sh python scripts/generate_teacher_traces.py \
+    --model Qwen/Qwen3-4B \
+    --input-file data/sec_facts_random_visible_6k/train.jsonl \
+    --output-file data/sec_facts_random_visible_6k/train_traces_6000_512.part$(printf "%02d" "$shard").jsonl \
+    --context-length 8192 \
+    --max-new-tokens 512 \
+    --start-index "$start" \
+    --end-index "$end" \
+    --device cuda \
+    --dtype bfloat16 \
+    --enable-thinking \
+    --max-storage 10TB &
+done
+wait
+
+for shard in $(seq 8 15); do
+  start=$((shard * 375))
+  end=$((start + 375))
+  gpu=$((shard - 8))
+  HIP_VISIBLE_DEVICES=$gpu scripts/rocm_docker_run.sh python scripts/generate_teacher_traces.py \
+    --model Qwen/Qwen3-4B \
+    --input-file data/sec_facts_random_visible_6k/train.jsonl \
+    --output-file data/sec_facts_random_visible_6k/train_traces_6000_512.part$(printf "%02d" "$shard").jsonl \
+    --context-length 8192 \
+    --max-new-tokens 512 \
+    --start-index "$start" \
+    --end-index "$end" \
+    --device cuda \
+    --dtype bfloat16 \
+    --enable-thinking \
+    --max-storage 10TB &
+done
+wait
+
+cat data/sec_facts_random_visible_6k/train_traces_6000_512.part*.jsonl \
+  > data/sec_facts_random_visible_6k/train_traces_6000_512.jsonl
+```
+
+Generate validation and test traces for CE utilization. MCQ accuracy evaluation
+does not require these trace files, but CE utilization does.
+
+```bash
+for split in validation test; do
+  for shard in $(seq 0 3); do
+    start=$((shard * 150))
+    end=$((start + 150))
+    gpu=$shard
+    HIP_VISIBLE_DEVICES=$gpu scripts/rocm_docker_run.sh python scripts/generate_teacher_traces.py \
+      --model Qwen/Qwen3-4B \
+      --input-file data/sec_facts_random_visible_6k/${split}.jsonl \
+      --output-file data/sec_facts_random_visible_6k/${split}_traces_600_512.part$(printf "%02d" "$shard").jsonl \
+      --context-length 8192 \
+      --max-new-tokens 512 \
+      --start-index "$start" \
+      --end-index "$end" \
+      --device cuda \
+      --dtype bfloat16 \
+      --enable-thinking \
+      --max-storage 10TB &
+  done
+  wait
+
+  cat data/sec_facts_random_visible_6k/${split}_traces_600_512.part*.jsonl \
+    > data/sec_facts_random_visible_6k/${split}_traces_600_512.jsonl
+done
+```
+
+Launch the completed continuation training run. This starts from the corrected
+3k pure checkpoint and continues on the 6k trace set.
+
+```bash
+HIP_VISIBLE_DEVICES=0 scripts/rocm_docker_run.sh python scripts/train_still.py \
+  --model Qwen/Qwen3-4B \
+  --train-file data/sec_facts_random_visible_6k/train_traces_6000_512.jsonl \
+  --eval-file data/sec_facts_random_visible_6k/validation.jsonl \
+  --output-dir checkpoints/qwen3_4b_sec_random_visible_6k_cachefix_pure1024_identity_resume1200_b2_lr5e6_w05 \
+  --init-checkpoint checkpoints/qwen3_4b_sec_random_visible_3k_cachefix_pure1024_identity_400step_b2_lr1e5_w05/step_300.pt \
+  --num-latents 1024 \
+  --context-length 8192 \
+  --steps 1200 \
+  --batch-size 2 \
+  --learning-rate 0.000005 \
+  --kl-weight 1.0 \
+  --reverse-kl-weight 0.5 \
+  --ce-weight 0.1 \
+  --eval-every 100 \
+  --save-every 100 \
+  --eval-limit 128 \
+  --loss-mode token \
+  --target-mode teacher_response \
+  --aux-letter-loss-weight 0.05 \
+  --balanced-answer-sampling \
+  --enable-thinking \
+  --score-mode letter \
+  --beta-base zero \
+  --device cuda \
+  --dtype bfloat16 \
+  --max-storage 10TB
+```
+
+For MCQ validation/test, do not pass `--enable-thinking`; this matches the
+sampled validation path used by `train_still.py` because the training command
+above does not set `--eval-enable-thinking`.
+
+```bash
+HIP_VISIBLE_DEVICES=0 scripts/rocm_docker_run.sh python scripts/evaluate_checkpoint.py \
+  --checkpoint checkpoints/qwen3_4b_sec_random_visible_6k_cachefix_pure1024_identity_resume1200_b2_lr5e6_w05/step_800.pt \
+  --eval-file data/sec_facts_random_visible_6k/validation.jsonl \
+  --limit 600 \
+  --score-mode letter \
+  --device cuda \
+  --dtype bfloat16 \
+  --max-storage 10TB
+
+HIP_VISIBLE_DEVICES=0 scripts/rocm_docker_run.sh python scripts/evaluate_checkpoint.py \
+  --checkpoint checkpoints/qwen3_4b_sec_random_visible_6k_cachefix_pure1024_identity_resume1200_b2_lr5e6_w05/step_800.pt \
+  --eval-file data/sec_facts_random_visible_6k/test.jsonl \
+  --limit 600 \
+  --score-mode letter \
+  --device cuda \
+  --dtype bfloat16 \
+  --max-storage 10TB
+```
+
+For CE utilization, pass `--enable-thinking` because the teacher-response
+traces were generated with thinking-enabled formatting. The completed report
+uses a fixed 200-row prefix sample per split:
+
+```bash
+HIP_VISIBLE_DEVICES=0 scripts/rocm_docker_run.sh python scripts/evaluate_ce_utilization.py \
+  --checkpoint checkpoints/qwen3_4b_sec_random_visible_6k_cachefix_pure1024_identity_resume1200_b2_lr5e6_w05/step_800.pt \
+  --eval-file data/sec_facts_random_visible_6k/validation_traces_600_512.jsonl \
+  --limit 200 \
+  --device cuda \
+  --dtype bfloat16 \
+  --enable-thinking \
+  --max-storage 10TB
+
+HIP_VISIBLE_DEVICES=0 scripts/rocm_docker_run.sh python scripts/evaluate_ce_utilization.py \
+  --checkpoint checkpoints/qwen3_4b_sec_random_visible_6k_cachefix_pure1024_identity_resume1200_b2_lr5e6_w05/step_800.pt \
+  --eval-file data/sec_facts_random_visible_6k/test_traces_600_512.jsonl \
+  --limit 200 \
+  --device cuda \
+  --dtype bfloat16 \
+  --enable-thinking \
+  --max-storage 10TB
+```
+
+The performance report for this run is:
+
+```text
+reports/performance_2026-06-08_6k_rocm.md
+```
+
 The key output files are:
 
 - `metrics.jsonl`: metrics for every training step
