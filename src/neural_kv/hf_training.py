@@ -132,6 +132,7 @@ def lexical_query_exact_token_indices(
     scored_lines.sort(reverse=True)
 
     haystack = [int(item) for item in context_ids.reshape(-1).tolist()]
+    decoded_context: str | None = None
     selected: list[int] = []
     seen: set[int] = set()
     for _, _, line in scored_lines:
@@ -150,7 +151,31 @@ def lexical_query_exact_token_indices(
                 found_ids = [int(item) for item in candidate_ids]
                 break
         if found_start < 0:
-            continue
+            if decoded_context is None:
+                decoded_context = tokenizer.decode(haystack, skip_special_tokens=False)
+            char_start = decoded_context.find(line)
+            if char_start < 0:
+                stripped = line.strip()
+                char_start = decoded_context.find(stripped)
+                char_end = char_start + len(stripped) if char_start >= 0 else -1
+            else:
+                char_end = char_start + len(line)
+            if char_start < 0:
+                continue
+            prefix_ids = tokenizer(
+                decoded_context[:char_start],
+                add_special_tokens=False,
+            ).input_ids
+            found_ids = tokenizer(
+                decoded_context[char_start:char_end],
+                add_special_tokens=False,
+            ).input_ids
+            if not found_ids:
+                continue
+            found_start = len(prefix_ids)
+            if found_start >= len(haystack):
+                continue
+            found_ids = found_ids[: max(0, len(haystack) - found_start)]
         for position in range(found_start, found_start + len(found_ids)):
             if position not in seen:
                 selected.append(position)

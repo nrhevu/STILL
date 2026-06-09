@@ -1,0 +1,65 @@
+{
+  "by_context_depth": [
+    {
+      "context_length": 8192,
+      "depth_percent": 0.0,
+      "exact_rate": 1.0,
+      "mean_cache_tokens": 1005.0,
+      "mean_compression": 8.000663349917081,
+      "mean_elapsed_seconds": 0.6162090301513672,
+      "mean_prompt_tokens": 8094.666666666667,
+      "success_rate": 1.0,
+      "trials": 3
+    },
+    {
+      "context_length": 8192,
+      "depth_percent": 25.0,
+      "exact_rate": 1.0,
+      "mean_cache_tokens": 1005.0,
+      "mean_compression": 8.001990049751244,
+      "mean_elapsed_seconds": 0.6390085220336914,
+      "mean_prompt_tokens": 8096.0,
+      "success_rate": 1.0,
+      "trials": 3
+    },
+    {
+      "context_length": 8192,
+      "depth_percent": 50.0,
+      "exact_rate": 1.0,
+      "mean_cache_tokens": 1005.0,
+      "mean_compression": 8.001990049751244,
+      "mean_elapsed_seconds": 0.598726749420166,
+      "mean_prompt_tokens": 8096.0,
+      "success_rate": 1.0,
+      "trials": 3
+    },
+    {
+      "context_length": 8192,
+      "depth_percent": 75.0,
+      "exact_rate": 1.0,
+      "mean_cache_tokens": 1005.0,
+      "mean_compression": 8.001658374792703,
+      "mean_elapsed_seconds": 0.6013889312744141,
+      "mean_prompt_tokens": 8095.666666666667,
+      "success_rate": 1.0,
+      "trials": 3
+    },
+    {
+      "context_length": 8192,
+      "depth_percent": 100.0,
+      "exact_rate": 1.0,
+      "mean_cache_tokens": 1005.0,
+      "mean_compression": 8.000995024875621,
+      "mean_elapsed_seconds": 0.6053319772084554,
+      "mean_prompt_tokens": 8096.0,
+      "success_rate": 1.0,
+      "trials": 3
+    }
+  ],
+  "checkpoint": "checkpoints/qwen3_32b_niah_ctx8192_x8_lex64_lat941_lr5e6_from25/final.pt",
+  "model": "Qwen/Qwen3-32B",
+  "overall_exact_rate": 1.0,
+  "overall_mean_compression": 8.001459369817578,
+  "overall_success_rate": 1.0,
+  "records": 15
+}

@@ -1,0 +1,17 @@
+{
+  "checkpoint": "checkpoints/qwen3_32b_niah_ctx8192_x8_lex64_lat941_lr5e6_from25/final.pt",
+  "compact_accuracy": 1.0,
+  "compact_prediction_counts": {
+    "A": 22,
+    "B": 26,
+    "C": 30,
+    "D": 22
+  },
+  "eval_file": "data/niah_qwen3_32b_ctx8192_chat/test.jsonl",
+  "full_accuracy": 1.0,
+  "mean_compression": 8.001333333333337,
+  "model": "Qwen/Qwen3-32B",
+  "no_context_accuracy": 0.22,
+  "rows": 100,
+  "score_mode": "letter"
+}
