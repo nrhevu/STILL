@@ -1,0 +1,233 @@
+{
+  "by_context_depth": [
+    {
+      "context_length": 4096,
+      "depth_percent": 0.0,
+      "exact_rate": 1.0,
+      "mean_elapsed_seconds": 2.3321265379587808,
+      "mean_prompt_tokens": 4190.0,
+      "success_rate": 1.0,
+      "trials": 3
+    },
+    {
+      "context_length": 4096,
+      "depth_percent": 25.0,
+      "exact_rate": 1.0,
+      "mean_elapsed_seconds": 0.8653472264607748,
+      "mean_prompt_tokens": 4191.0,
+      "success_rate": 1.0,
+      "trials": 3
+    },
+    {
+      "context_length": 4096,
+      "depth_percent": 50.0,
+      "exact_rate": 1.0,
+      "mean_elapsed_seconds": 0.8663968245188395,
+      "mean_prompt_tokens": 4190.333333333333,
+      "success_rate": 1.0,
+      "trials": 3
+    },
+    {
+      "context_length": 4096,
+      "depth_percent": 75.0,
+      "exact_rate": 1.0,
+      "mean_elapsed_seconds": 0.8683223724365234,
+      "mean_prompt_tokens": 4190.666666666667,
+      "success_rate": 1.0,
+      "trials": 3
+    },
+    {
+      "context_length": 4096,
+      "depth_percent": 100.0,
+      "exact_rate": 1.0,
+      "mean_elapsed_seconds": 0.8646218776702881,
+      "mean_prompt_tokens": 4190.666666666667,
+      "success_rate": 1.0,
+      "trials": 3
+    },
+    {
+      "context_length": 8192,
+      "depth_percent": 0.0,
+      "exact_rate": 1.0,
+      "mean_elapsed_seconds": 1.4433279832204182,
+      "mean_prompt_tokens": 8286.0,
+      "success_rate": 1.0,
+      "trials": 3
+    },
+    {
+      "context_length": 8192,
+      "depth_percent": 25.0,
+      "exact_rate": 1.0,
+      "mean_elapsed_seconds": 1.4485023816426594,
+      "mean_prompt_tokens": 8287.0,
+      "success_rate": 1.0,
+      "trials": 3
+    },
+    {
+      "context_length": 8192,
+      "depth_percent": 50.0,
+      "exact_rate": 1.0,
+      "mean_elapsed_seconds": 1.4479787349700928,
+      "mean_prompt_tokens": 8287.0,
+      "success_rate": 1.0,
+      "trials": 3
+    },
+    {
+      "context_length": 8192,
+      "depth_percent": 75.0,
+      "exact_rate": 1.0,
+      "mean_elapsed_seconds": 1.4503297805786133,
+      "mean_prompt_tokens": 8286.666666666666,
+      "success_rate": 1.0,
+      "trials": 3
+    },
+    {
+      "context_length": 8192,
+      "depth_percent": 100.0,
+      "exact_rate": 1.0,
+      "mean_elapsed_seconds": 1.4515193303426106,
+      "mean_prompt_tokens": 8287.0,
+      "success_rate": 1.0,
+      "trials": 3
+    },
+    {
+      "context_length": 16384,
+      "depth_percent": 0.0,
+      "exact_rate": 1.0,
+      "mean_elapsed_seconds": 2.8990751107533774,
+      "mean_prompt_tokens": 16479.0,
+      "success_rate": 1.0,
+      "trials": 3
+    },
+    {
+      "context_length": 16384,
+      "depth_percent": 25.0,
+      "exact_rate": 1.0,
+      "mean_elapsed_seconds": 2.9033637841542563,
+      "mean_prompt_tokens": 16479.666666666668,
+      "success_rate": 1.0,
+      "trials": 3
+    },
+    {
+      "context_length": 16384,
+      "depth_percent": 50.0,
+      "exact_rate": 1.0,
+      "mean_elapsed_seconds": 2.902794679005941,
+      "mean_prompt_tokens": 16479.666666666668,
+      "success_rate": 1.0,
+      "trials": 3
+    },
+    {
+      "context_length": 16384,
+      "depth_percent": 75.0,
+      "exact_rate": 1.0,
+      "mean_elapsed_seconds": 2.9057183265686035,
+      "mean_prompt_tokens": 16480.0,
+      "success_rate": 1.0,
+      "trials": 3
+    },
+    {
+      "context_length": 16384,
+      "depth_percent": 100.0,
+      "exact_rate": 1.0,
+      "mean_elapsed_seconds": 2.905700365702311,
+      "mean_prompt_tokens": 16480.0,
+      "success_rate": 1.0,
+      "trials": 3
+    },
+    {
+      "context_length": 32768,
+      "depth_percent": 0.0,
+      "exact_rate": 1.0,
+      "mean_elapsed_seconds": 6.585931777954102,
+      "mean_prompt_tokens": 32863.0,
+      "success_rate": 1.0,
+      "trials": 3
+    },
+    {
+      "context_length": 32768,
+      "depth_percent": 25.0,
+      "exact_rate": 1.0,
+      "mean_elapsed_seconds": 6.572457631429036,
+      "mean_prompt_tokens": 32864.0,
+      "success_rate": 1.0,
+      "trials": 3
+    },
+    {
+      "context_length": 32768,
+      "depth_percent": 50.0,
+      "exact_rate": 1.0,
+      "mean_elapsed_seconds": 6.5794055461883545,
+      "mean_prompt_tokens": 32864.0,
+      "success_rate": 1.0,
+      "trials": 3
+    },
+    {
+      "context_length": 32768,
+      "depth_percent": 75.0,
+      "exact_rate": 1.0,
+      "mean_elapsed_seconds": 6.578088680903117,
+      "mean_prompt_tokens": 32863.666666666664,
+      "success_rate": 1.0,
+      "trials": 3
+    },
+    {
+      "context_length": 32768,
+      "depth_percent": 100.0,
+      "exact_rate": 1.0,
+      "mean_elapsed_seconds": 6.5816874504089355,
+      "mean_prompt_tokens": 32864.0,
+      "success_rate": 1.0,
+      "trials": 3
+    },
+    {
+      "context_length": 40000,
+      "depth_percent": 0.0,
+      "exact_rate": 1.0,
+      "mean_elapsed_seconds": 8.491851727167765,
+      "mean_prompt_tokens": 40094.333333333336,
+      "success_rate": 1.0,
+      "trials": 3
+    },
+    {
+      "context_length": 40000,
+      "depth_percent": 25.0,
+      "exact_rate": 1.0,
+      "mean_elapsed_seconds": 8.490659554799398,
+      "mean_prompt_tokens": 40095.333333333336,
+      "success_rate": 1.0,
+      "trials": 3
+    },
+    {
+      "context_length": 40000,
+      "depth_percent": 50.0,
+      "exact_rate": 1.0,
+      "mean_elapsed_seconds": 8.496545314788818,
+      "mean_prompt_tokens": 40095.333333333336,
+      "success_rate": 1.0,
+      "trials": 3
+    },
+    {
+      "context_length": 40000,
+      "depth_percent": 75.0,
+      "exact_rate": 1.0,
+      "mean_elapsed_seconds": 8.492951313654581,
+      "mean_prompt_tokens": 40095.333333333336,
+      "success_rate": 1.0,
+      "trials": 3
+    },
+    {
+      "context_length": 40000,
+      "depth_percent": 100.0,
+      "exact_rate": 1.0,
+      "mean_elapsed_seconds": 8.491283893585205,
+      "mean_prompt_tokens": 40096.0,
+      "success_rate": 1.0,
+      "trials": 3
+    }
+  ],
+  "model": "Qwen/Qwen3-32B",
+  "overall_exact_rate": 1.0,
+  "overall_success_rate": 1.0,
+  "records": 75
+}
