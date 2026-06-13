@@ -16,7 +16,9 @@ from neural_kv.hf_training import (
     dtype_from_name,
     generate_mcq_answer,
     generate_mcq_no_context_answer,
+    infer_input_device,
     load_model_and_tokenizer,
+    place_compactor_for_model,
     resolve_device,
     score_mcq_letters,
     score_mcq_no_context,
@@ -31,6 +33,28 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--limit", type=int, default=32)
     parser.add_argument("--device", default="auto")
     parser.add_argument("--dtype", default="bfloat16")
+    parser.add_argument("--attn-implementation", default="")
+    parser.add_argument(
+        "--device-map",
+        default="",
+        help="Optional Hugging Face device_map value, e.g. 'auto' for multi-GPU loading.",
+    )
+    parser.add_argument(
+        "--max-memory",
+        default="",
+        help="Optional device memory map, e.g. '0=280GiB,1=280GiB,cpu=512GiB'.",
+    )
+    parser.add_argument(
+        "--rope-scaling",
+        default="",
+        help="Optional JSON rope_scaling override passed through AutoConfig.",
+    )
+    parser.add_argument(
+        "--max-position-embeddings",
+        type=int,
+        default=0,
+        help="Optional max_position_embeddings override for long-context YaRN runs.",
+    )
     parser.add_argument(
         "--score-mode",
         choices=["choice_loglik", "letter", "letter_delta", "generation"],
@@ -70,7 +94,14 @@ def main() -> None:
         model_name,
         device=device,
         dtype=dtype_from_name(args.dtype),
+        attn_implementation=args.attn_implementation,
+        device_map=args.device_map,
+        max_memory=args.max_memory,
+        rope_scaling=args.rope_scaling,
+        max_position_embeddings=args.max_position_embeddings,
     )
+    device = infer_input_device(model, fallback=device)
+    print(f"model input device: {device}")
     patched_layers = enable_still_attention_bias(model)
     print(f"patched attention layers for STILL beta: {patched_layers}")
 
@@ -84,8 +115,10 @@ def main() -> None:
         beta_base=beta_base,
         layer_compactor_groups=layer_compactor_groups,
         head_specific_latents=head_specific_latents,
-    ).to(device)
+    )
     compactor.load_state_dict(checkpoint["state_dict"])
+    placement = place_compactor_for_model(compactor, model, fallback_device=device)
+    print(f"compactor placement devices: {sorted(set(placement.values()))}")
     compactor.eval()
 
     rows = read_jsonl(args.eval_file, limit=args.limit)
@@ -179,9 +212,12 @@ def main() -> None:
                 }
             )
 
+    compact_accuracy = compact_correct / len(rows) if rows else 0.0
+    full_accuracy = full_correct / len(rows) if rows else 0.0
     metrics = {
-        "compact_accuracy": compact_correct / len(rows) if rows else 0.0,
-        "full_accuracy": full_correct / len(rows) if rows else 0.0,
+        "compact_accuracy": compact_accuracy,
+        "full_accuracy": full_accuracy,
+        "relative_accuracy_to_full": compact_accuracy / full_accuracy if full_accuracy > 0 else 0.0,
         "no_context_accuracy": no_context_correct / len(rows) if rows else 0.0,
         "mean_compression": compression_sum / len(rows) if rows else 0.0,
         "compact_prediction_counts": dict(sorted(compact_counts.items())),

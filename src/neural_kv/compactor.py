@@ -10,7 +10,7 @@ from torch import nn
 from neural_kv.cache import CompactKVCache, normalize_past_key_values
 from neural_kv.rope import apply_rope, evenly_spaced_positions
 
-EXACT_TOKEN_STRATEGIES = {"prefix", "even", "kv_norm", "lexical"}
+EXACT_TOKEN_STRATEGIES = {"prefix", "even", "kv_norm", "lexical", "lexical_linked"}
 
 
 class LatentSelfAttention(nn.Module):
@@ -369,12 +369,16 @@ class StillCompactor(nn.Module):
         if self.exact_strategy == "even":
             if exact_count == available:
                 return torch.arange(sink_count, seq_len, device=device, dtype=torch.long)
-            return torch.linspace(
-                sink_count,
-                seq_len - 1,
-                exact_count,
-                device=device,
-            ).round().long()
+            return (
+                torch.linspace(
+                    sink_count,
+                    seq_len - 1,
+                    exact_count,
+                    device=device,
+                )
+                .round()
+                .long()
+            )
         if self.exact_strategy == "kv_norm":
             scores = layer_keys.float().square().sum(dim=-1)
             scores = scores + layer_values.float().square().sum(dim=-1)
@@ -383,7 +387,7 @@ class StillCompactor(nn.Module):
                 scores[..., :sink_count] = -torch.inf
             indices = torch.topk(scores, k=exact_count, dim=-1).indices
             return indices.sort(dim=-1).values
-        if self.exact_strategy == "lexical":
+        if self.exact_strategy in {"lexical", "lexical_linked"}:
             return None
         raise ValueError(f"Unsupported exact_strategy: {self.exact_strategy}")
 
@@ -423,8 +427,13 @@ class StillCompactor(nn.Module):
         values: list[torch.Tensor] = []
         biases: list[torch.Tensor] = []
         for layer_index, (layer_keys, layer_values) in enumerate(normalized):
-            layer_compactor = self.layers[self._layer_group_index(layer_index)]
-            compact_k, compact_v, beta = layer_compactor(layer_keys, layer_values)
+            if self.num_latents == 0:
+                compact_k = layer_keys[..., :0, :]
+                compact_v = layer_values[..., :0, :]
+                beta = layer_keys.new_zeros(*layer_keys.shape[:-2], 0)
+            else:
+                layer_compactor = self.layers[self._layer_group_index(layer_index)]
+                compact_k, compact_v, beta = layer_compactor(layer_keys, layer_values)
             sink_count = 0
             if self.sink_tokens:
                 sink_count = min(self.sink_tokens, int(layer_keys.shape[-2]))
@@ -453,11 +462,19 @@ class StillCompactor(nn.Module):
                 prefix_tokens = sink_count
                 if prefix_tokens:
                     compact_k = torch.cat(
-                        [compact_k[..., :prefix_tokens, :], exact_k, compact_k[..., prefix_tokens:, :]],
+                        [
+                            compact_k[..., :prefix_tokens, :],
+                            exact_k,
+                            compact_k[..., prefix_tokens:, :],
+                        ],
                         dim=-2,
                     )
                     compact_v = torch.cat(
-                        [compact_v[..., :prefix_tokens, :], exact_v, compact_v[..., prefix_tokens:, :]],
+                        [
+                            compact_v[..., :prefix_tokens, :],
+                            exact_v,
+                            compact_v[..., prefix_tokens:, :],
+                        ],
                         dim=-2,
                     )
                     beta = torch.cat(

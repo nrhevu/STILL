@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass
 
 import torch
 import torch.nn.functional as F
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 
 from neural_kv.attention_bias import still_biases
 from neural_kv.cache import normalize_past_key_values
@@ -38,6 +39,7 @@ ANSWER_PATTERN = re.compile(
 )
 TAIL_LETTER_PATTERN = re.compile(r"(?:^|[^A-Za-z])([ABCD])(?:[^A-Za-z]|$)")
 QUERY_TOKEN_PATTERN = re.compile(r"[A-Za-z0-9]+")
+LINK_TOKEN_PATTERN = re.compile(r"\b[A-Z][A-Z0-9]+-[A-Za-z0-9-]+\b")
 QUERY_STOPWORDS = {
     "a",
     "and",
@@ -46,9 +48,13 @@ QUERY_STOPWORDS = {
     "form",
     "fiscal",
     "is",
+    "key",
+    "niah",
     "of",
     "period",
     "reported",
+    "retrieval",
+    "secret",
     "the",
     "unit",
     "value",
@@ -112,24 +118,45 @@ def lexical_query_exact_token_indices(
     *,
     max_tokens: int,
     device: str,
+    include_linked: bool = False,
 ) -> torch.Tensor | None:
-    """Select exact context-token indices from lines that lexically match the query."""
+    """Select exact context-token indices from query-matching context lines."""
     if max_tokens <= 0:
         return None
     terms = _query_terms(str(row.get("question", "")))
     if not terms:
         return None
+    context_lines = [
+        (line_index, line.strip())
+        for line_index, line in enumerate(str(row.get("context", "")).splitlines())
+        if line.strip()
+    ]
     scored_lines: list[tuple[tuple[int, int], int, str]] = []
-    for line_index, line in enumerate(str(row.get("context", "")).splitlines()):
-        stripped = line.strip()
-        if not stripped:
-            continue
+    for line_index, stripped in context_lines:
         score = _line_query_score(line=stripped, terms=terms)
         if score[0] > 0:
             scored_lines.append((score, -line_index, stripped))
     if not scored_lines:
         return None
     scored_lines.sort(reverse=True)
+    if include_linked:
+        ordered_lines: list[tuple[tuple[int, int], int, str]] = []
+        included: set[str] = set()
+        for scored in scored_lines:
+            _, _, line = scored
+            if line not in included:
+                ordered_lines.append(scored)
+                included.add(line)
+            linked_tokens = set(LINK_TOKEN_PATTERN.findall(line))
+            if not linked_tokens:
+                continue
+            for line_index, candidate in context_lines:
+                if candidate in included:
+                    continue
+                if any(token in candidate for token in linked_tokens):
+                    ordered_lines.append(((0, 0), -line_index, candidate))
+                    included.add(candidate)
+        scored_lines = ordered_lines
 
     haystack = [int(item) for item in context_ids.reshape(-1).tolist()]
     decoded_context: str | None = None
@@ -195,7 +222,8 @@ def _exact_token_indices_for_compactor(
     *,
     device: str,
 ) -> torch.Tensor | None:
-    if getattr(compactor, "exact_strategy", "") != "lexical":
+    exact_strategy = getattr(compactor, "exact_strategy", "")
+    if exact_strategy not in {"lexical", "lexical_linked"}:
         return None
     return lexical_query_exact_token_indices(
         tokenizer,
@@ -203,6 +231,7 @@ def _exact_token_indices_for_compactor(
         encoded.context_ids,
         max_tokens=int(getattr(compactor, "exact_tokens", 0)),
         device=device,
+        include_linked=exact_strategy == "lexical_linked",
     )
 
 
@@ -223,25 +252,159 @@ def resolve_device(device: str) -> str:
     return "cuda" if torch.cuda.is_available() else "cpu"
 
 
+def parse_max_memory(value: str) -> dict[int | str, str] | None:
+    """Parse a compact CLI max-memory map for Hugging Face device maps."""
+    if not value:
+        return None
+    value = value.strip()
+    if not value:
+        return None
+    if value.startswith("{"):
+        parsed = json.loads(value)
+        return {
+            int(key) if str(key).isdigit() else str(key): str(item) for key, item in parsed.items()
+        }
+
+    result: dict[int | str, str] = {}
+    for item in value.split(","):
+        item = item.strip()
+        if not item:
+            continue
+        if "=" not in item:
+            raise ValueError("--max-memory entries must look like 0=280GiB,cpu=512GiB")
+        key, memory = item.split("=", 1)
+        key = key.strip()
+        memory = memory.strip()
+        if not key or not memory:
+            raise ValueError("--max-memory entries need non-empty keys and values")
+        result[int(key) if key.isdigit() else key] = memory
+    return result or None
+
+
+def parse_rope_scaling(value: str) -> dict[str, object] | None:
+    if not value:
+        return None
+    parsed = json.loads(value)
+    if not isinstance(parsed, dict):
+        raise ValueError("--rope-scaling must be a JSON object")
+    return parsed
+
+
 def load_model_and_tokenizer(
     model_name: str,
     *,
     device: str,
     dtype: torch.dtype,
+    attn_implementation: str = "",
+    device_map: str = "",
+    max_memory: str = "",
+    rope_scaling: str = "",
+    max_position_embeddings: int = 0,
 ):
     tokenizer = AutoTokenizer.from_pretrained(model_name, use_fast=True)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
-    model = AutoModelForCausalLM.from_pretrained(
-        model_name,
-        torch_dtype=dtype if device.startswith("cuda") else torch.float32,
-        low_cpu_mem_usage=True,
-    )
-    model.to(device)
+    kwargs: dict[str, object] = {
+        "torch_dtype": dtype if device.startswith("cuda") or device_map else torch.float32,
+        "low_cpu_mem_usage": True,
+    }
+    if attn_implementation:
+        kwargs["attn_implementation"] = attn_implementation
+    if device_map:
+        kwargs["device_map"] = device_map
+    parsed_max_memory = parse_max_memory(max_memory)
+    if parsed_max_memory is not None:
+        kwargs["max_memory"] = parsed_max_memory
+
+    config = None
+    parsed_rope_scaling = parse_rope_scaling(rope_scaling)
+    if parsed_rope_scaling is not None or max_position_embeddings > 0:
+        config = AutoConfig.from_pretrained(model_name)
+        if parsed_rope_scaling is not None:
+            config.rope_scaling = parsed_rope_scaling
+        if max_position_embeddings > 0:
+            config.max_position_embeddings = int(max_position_embeddings)
+        kwargs["config"] = config
+
+    model = AutoModelForCausalLM.from_pretrained(model_name, **kwargs)
+    if not device_map:
+        model.to(device)
     model.eval()
     for parameter in model.parameters():
         parameter.requires_grad_(False)
     return model, tokenizer
+
+
+def infer_input_device(model, *, fallback: str) -> str:
+    """Return the device that should receive input ids for model-parallel models."""
+    model_device = getattr(model, "device", None)
+    if isinstance(model_device, torch.device) and model_device.type != "meta":
+        return str(model_device)
+    for parameter in model.parameters():
+        if parameter.device.type != "meta":
+            return str(parameter.device)
+    return fallback
+
+
+def _nested_attr(obj, path: str):
+    current = obj
+    for part in path.split("."):
+        if not hasattr(current, part):
+            return None
+        current = getattr(current, part)
+    return current
+
+
+def _decoder_layers(model) -> list[torch.nn.Module]:
+    for path in (
+        "model.layers",
+        "model.decoder.layers",
+        "transformer.h",
+        "gpt_neox.layers",
+    ):
+        layers = _nested_attr(model, path)
+        if layers is not None:
+            return list(layers)
+    return []
+
+
+def _module_device(module: torch.nn.Module, *, fallback: str) -> torch.device:
+    for parameter in module.parameters(recurse=True):
+        if parameter.device.type != "meta":
+            return parameter.device
+    return torch.device(fallback)
+
+
+def place_compactor_for_model(
+    compactor: StillCompactor,
+    model,
+    *,
+    fallback_device: str,
+) -> dict[int, str]:
+    """Place per-layer compactor modules with matching sharded decoder layers."""
+    decoder_layers = _decoder_layers(model)
+    if len(decoder_layers) != compactor.num_hidden_layers:
+        compactor.to(fallback_device)
+        return {index: fallback_device for index in range(len(compactor.layers))}
+
+    group_devices: dict[int, torch.device] = {}
+    for layer_index, layer in enumerate(decoder_layers):
+        group_index = compactor._layer_group_index(layer_index)
+        layer_device = _module_device(layer, fallback=fallback_device)
+        previous = group_devices.get(group_index)
+        if previous is not None and previous != layer_device:
+            raise ValueError(
+                "Layer-compactor groups cannot span devices under model parallel loading. "
+                "Use per-layer compactor groups by leaving --layer-compactor-groups at 0."
+            )
+        group_devices[group_index] = layer_device
+
+    placement: dict[int, str] = {}
+    for group_index, layer_compactor in enumerate(compactor.layers):
+        target = group_devices.get(group_index, torch.device(fallback_device))
+        layer_compactor.to(target)
+        placement[group_index] = str(target)
+    return placement
 
 
 def _tokenize_text(
@@ -412,9 +575,8 @@ def _encode_chat_continuation(
     if prefix_ids is None or full_ids is None:
         return None
     prefix_length = int(prefix_ids.shape[-1])
-    if (
-        int(full_ids.shape[-1]) >= prefix_length
-        and torch.equal(full_ids[:, :prefix_length], prefix_ids)
+    if int(full_ids.shape[-1]) >= prefix_length and torch.equal(
+        full_ids[:, :prefix_length], prefix_ids
     ):
         return full_ids[:, prefix_length:]
 
@@ -655,6 +817,33 @@ def _position_ids(start: int, length: int, *, device: str) -> torch.Tensor:
 
 def _attention_mask(prefix_length: int, input_length: int, *, device: str) -> torch.Tensor:
     return torch.ones(1, prefix_length + input_length, device=device, dtype=torch.long)
+
+
+@torch.no_grad()
+def prefill_context_cache(model, input_ids: torch.Tensor, *, chunk_size: int = 0):
+    """Prefill a causal LM cache, optionally in chunks for very long contexts."""
+    total_tokens = int(input_ids.shape[-1])
+    if chunk_size <= 0 or total_tokens <= chunk_size:
+        return model(input_ids=input_ids, use_cache=True)
+
+    past_key_values = None
+    outputs = None
+    for start in range(0, total_tokens, chunk_size):
+        end = min(start + chunk_size, total_tokens)
+        chunk_ids = input_ids[:, start:end]
+        kwargs: dict[str, object] = {
+            "input_ids": chunk_ids,
+            "past_key_values": past_key_values,
+            "use_cache": True,
+        }
+        if start > 0:
+            kwargs["attention_mask"] = _attention_mask(start, end - start, device=input_ids.device)
+            kwargs["position_ids"] = _position_ids(start, end - start, device=input_ids.device)
+        outputs = model(**kwargs)
+        past_key_values = outputs.past_key_values
+    if outputs is None:
+        raise ValueError("cannot prefill an empty context")
+    return outputs
 
 
 def _fresh_dynamic_cache(past_key_values):

@@ -1,0 +1,54 @@
+{
+  "by_context_depth": [
+    {
+      "context_length": 262144,
+      "depth_percent": 100.0,
+      "exact_rate": 1.0,
+      "full_success_rate": 1.0,
+      "mean_cache_tokens": 317.0,
+      "mean_compression": 825.4605678233438,
+      "mean_elapsed_seconds": 1.623410701751709,
+      "mean_prompt_tokens": 261807.0,
+      "relative_success_to_full": 1.0,
+      "success_rate": 1.0,
+      "task": "multi_needle",
+      "trials": 1
+    },
+    {
+      "context_length": 262144,
+      "depth_percent": 0.0,
+      "exact_rate": 1.0,
+      "full_success_rate": 1.0,
+      "mean_cache_tokens": 256.0,
+      "mean_compression": 1022.16015625,
+      "mean_elapsed_seconds": 1.7967476844787598,
+      "mean_prompt_tokens": 261808.0,
+      "relative_success_to_full": 1.0,
+      "success_rate": 1.0,
+      "task": "single",
+      "trials": 1
+    },
+    {
+      "context_length": 262144,
+      "depth_percent": 50.0,
+      "exact_rate": 1.0,
+      "full_success_rate": 1.0,
+      "mean_cache_tokens": 336.0,
+      "mean_compression": 778.7886904761905,
+      "mean_elapsed_seconds": 1.7552685737609863,
+      "mean_prompt_tokens": 261808.0,
+      "relative_success_to_full": 1.0,
+      "success_rate": 1.0,
+      "task": "two_hop",
+      "trials": 1
+    }
+  ],
+  "checkpoint": "",
+  "model": "Qwen/Qwen3-235B-A22B",
+  "overall_exact_rate": 1.0,
+  "overall_full_success_rate": 1.0,
+  "overall_mean_compression": 875.4698048498448,
+  "overall_relative_success_to_full": 1.0,
+  "overall_success_rate": 1.0,
+  "records": 3
+}

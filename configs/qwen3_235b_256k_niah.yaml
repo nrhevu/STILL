@@ -1,0 +1,36 @@
+model: Qwen/Qwen3-235B-A22B
+context_length: 262144
+context_note: >-
+  Qwen3-235B-A22B is documented with 32768 native context and YaRN examples
+  validated to 131072 tokens. This config uses YaRN factor 8 for an empirical
+  256k-token test, so the report must treat 256k support as measured behavior.
+rope_scaling_json: '{"rope_type":"yarn","factor":8.0,"original_max_position_embeddings":32768}'
+max_position_embeddings: 262144
+attn_implementation: sdpa
+prefill_chunk_size: 512
+device_map: auto
+max_memory: 0=280GiB,1=280GiB,2=280GiB,3=280GiB,4=280GiB,5=280GiB,6=280GiB,7=280GiB,cpu=512GiB
+dataset:
+  type: synthetic_niah_mixed
+  task: mixed
+  answer_mode: mcq_letter
+  depths: 0,50,100
+  trials: 1
+  case_context_token_margin: 512
+compact_eval:
+  compare_full_cache: true
+  untrained_compactor: true
+  num_latents: 0
+  sink_tokens: 256
+  exact_tokens: 512
+  exact_strategy: lexical_linked
+  beta_base: zero
+  expected_initial_compression: about_340x_sink_exact
+training_gate:
+  min_relative_accuracy_to_full: 0.95
+  min_full_cache_success_rate: 0.95
+  score: exact_or_contains_secret_value
+outputs:
+  records: reports/niah_qwen3_235b_256k_compare.jsonl
+  summary: reports/niah_qwen3_235b_256k_compare_summary.json
+  report: reports/niah_qwen3_235b_256k_report.md

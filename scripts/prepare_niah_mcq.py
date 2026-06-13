@@ -9,7 +9,7 @@ from pathlib import Path
 
 from transformers import AutoTokenizer
 
-from neural_kv.niah import make_niah_case, niah_case_to_mcq_row
+from neural_kv.niah import NIAH_TASKS, make_niah_case, niah_case_to_mcq_row
 from neural_kv.storage import check_storage_quota, default_storage_roots
 
 
@@ -38,6 +38,12 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument("--depths", type=parse_csv_floats, default="0,25,50,75,100")
+    parser.add_argument(
+        "--task",
+        choices=sorted(NIAH_TASKS),
+        default="single",
+        help="Synthetic long-context retrieval task family.",
+    )
     parser.add_argument("--train-rows", type=int, default=600)
     parser.add_argument("--validation-rows", type=int, default=100)
     parser.add_argument("--test-rows", type=int, default=100)
@@ -54,6 +60,7 @@ def build_rows(
     context_tokens: int,
     depths: list[float],
     seed: int,
+    task: str,
 ) -> list[dict[str, object]]:
     rows: list[dict[str, object]] = []
     for index in range(count):
@@ -64,6 +71,7 @@ def build_rows(
             depth_percent=depth,
             trial=index,
             seed=seed,
+            task=task,
         )
         row = niah_case_to_mcq_row(case, split=split, seed=seed)
         row["train_context_length"] = context_tokens
@@ -84,7 +92,9 @@ def main() -> None:
     if args.context_length <= args.raw_context_token_margin:
         raise ValueError("--context-length must exceed --raw-context-token-margin")
     roots = default_storage_roots()
-    print(f"storage before NIAH data prep: {check_storage_quota(roots, args.max_storage).summary()}")
+    print(
+        f"storage before NIAH data prep: {check_storage_quota(roots, args.max_storage).summary()}"
+    )
     tokenizer = AutoTokenizer.from_pretrained(args.model, use_fast=True)
     context_tokens = args.context_length - args.raw_context_token_margin
     output_dir = Path(args.output_dir)
@@ -98,6 +108,7 @@ def main() -> None:
         "context_length": args.context_length,
         "generated_raw_context_tokens": context_tokens,
         "depths": args.depths,
+        "task": args.task,
         "splits": {},
     }
     for split, (count, seed) in splits.items():
@@ -108,6 +119,7 @@ def main() -> None:
             context_tokens=context_tokens,
             depths=args.depths,
             seed=seed,
+            task=args.task,
         )
         written = write_jsonl(output_dir / f"{split}.jsonl", rows)
         summary["splits"][split] = written
