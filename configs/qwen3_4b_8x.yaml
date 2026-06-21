@@ -1,8 +1,0 @@
-model: Qwen/Qwen3-4B
-context_length: 8192
-num_latents: 1024
-steps: 2900
-kl_weight: 1.0
-ce_weight: 0.1
-learning_rate: 0.00002
-max_storage: 10TB

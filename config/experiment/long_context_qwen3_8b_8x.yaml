@@ -1,0 +1,19 @@
+extends: ../base.yaml
+output_dir: checkpoints/long_context_qwen3_8b_8x
+
+model:
+  name: Qwen/Qwen3-8B
+  context_length: 8192
+  compactor:
+    num_latents: 1024
+    beta_base: zero
+    head_specific_latents: true
+
+training:
+  steps: 2900
+  batch_size: 1
+  learning_rate: 5.0e-6
+  loss_mode: token
+  target_mode: teacher_response
+  reverse_kl_weight: 0.5
+  aux_letter_loss_weight: 0.05

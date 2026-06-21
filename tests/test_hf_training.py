@@ -1,9 +1,10 @@
-import torch
 from types import SimpleNamespace
 
+import torch
+
 from neural_kv.hf_training import (
-    extract_answer_letter,
     _fresh_dynamic_cache,
+    extract_answer_letter,
     kl_and_ce_loss,
     letter_kl_and_ce_loss,
     lexical_query_exact_token_indices,
@@ -90,8 +91,10 @@ def test_extract_answer_letter_accepts_final_standalone_letter() -> None:
 def test_lexical_query_exact_token_indices_selects_matching_context_line() -> None:
     context = "\n".join(
         [
-            "Company: Microsoft Corp. | Concept: Revenue | Fiscal year: 2024 | Period: FY | Unit: USD | Value: 456",
-            "Company: Apple Inc. | Concept: Revenue | Fiscal year: 2024 | Period: FY | Unit: USD | Value: 123",
+            "Company: Microsoft Corp. | Concept: Revenue | Fiscal year: 2024 | "
+            "Period: FY | Unit: USD | Value: 456",
+            "Company: Apple Inc. | Concept: Revenue | Fiscal year: 2024 | "
+            "Period: FY | Unit: USD | Value: 123",
         ]
     )
     row = {

@@ -3,9 +3,9 @@ requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
 [project]
-name = "neural-kv-compressor"
+name = "neural-kv"
 version = "0.1.0"
-description = "STILL-style neural KV-cache compaction with bounded data preparation and evaluation."
+description = "Clean PyTorch Lightning implementation of neural KV-cache compaction for Hugging Face causal LMs."
 readme = "README.md"
 requires-python = ">=3.11,<3.14"
 dependencies = [
@@ -21,6 +21,7 @@ train = [
   "einops>=0.8,<1",
   "hf-transfer>=0.1.9,<1",
   "huggingface-hub>=0.30,<1",
+  "lightning>=2.5,<3",
   "safetensors>=0.5,<1",
   "sentencepiece>=0.2,<1",
   "torch==2.11.0 ; sys_platform == 'linux'",
@@ -41,7 +42,7 @@ testpaths = ["tests"]
 
 [tool.ruff]
 line-length = 100
-target-version = "py311"
+target-version = "py312"
 
 [tool.ruff.lint]
 select = ["B", "E", "F", "I", "UP"]

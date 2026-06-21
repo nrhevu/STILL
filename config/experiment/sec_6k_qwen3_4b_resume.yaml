@@ -1,0 +1,6 @@
+extends: sec_6k_qwen3_4b_8x_repro.yaml
+output_dir: checkpoints/sec_6k_qwen3_4b_resume
+
+training:
+  steps: 1200
+  learning_rate: 5.0e-6

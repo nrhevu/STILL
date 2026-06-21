@@ -1,0 +1,61 @@
+extends: ../base.yaml
+seed: 7
+output_dir: checkpoints/sec_6k_qwen3_4b_8x_repro
+
+runtime:
+  dtype: bfloat16
+  model_load_device: auto
+  preferred_gpu: 7
+  require_idle_gpu: true
+  max_storage: 10TB
+
+trainer:
+  accelerator: gpu
+  devices: 1
+  strategy: auto
+  precision: bf16-mixed
+  log_every_n_steps: 1
+  val_check_interval: 100
+
+model:
+  name: Qwen/Qwen3-4B
+  context_length: 8192
+  compactor:
+    num_latents: 1024
+    num_blocks: 2
+    latent_dropout: 0.0
+    beta_base: zero
+    layer_compactor_groups: 0
+    sink_tokens: 0
+    exact_tokens: 0
+    exact_strategy: prefix
+    head_specific_latents: false
+
+training:
+  steps: 1200
+  batch_size: 2
+  learning_rate: 5.0e-6
+  gradient_clip_val: 1.0
+  kl_weight: 1.0
+  reverse_kl_weight: 0.5
+  ce_weight: 0.1
+  aux_letter_loss_weight: 0.05
+  aux_letter_enable_thinking: false
+  loss_mode: token
+  target_mode: teacher_response
+  score_mode: letter
+  use_chat_template: true
+  enable_thinking: true
+  eval_enable_thinking: false
+  balanced_answer_sampling: true
+  trainable_scope: all
+  init_checkpoint: checkpoints/qwen3_4b_sec_random_visible_3k_cachefix_pure1024_identity_400step_b2_lr1e5_w05/step_300.pt
+  save_every: 100
+  eval_every: 100
+
+data:
+  train_file: data/sec_facts_random_visible_6k/train_traces_6000_512.jsonl
+  validation_file: data/sec_facts_random_visible_6k/validation.jsonl
+  limit_train: null
+  limit_validation: 128
+  num_workers: 0

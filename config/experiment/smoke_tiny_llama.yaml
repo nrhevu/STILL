@@ -1,0 +1,27 @@
+extends: ../base.yaml
+output_dir: checkpoints/smoke_lightning
+
+runtime:
+  require_idle_gpu: false
+  model_load_device: auto
+
+trainer:
+  accelerator: auto
+  devices: auto
+  precision: 32-true
+
+model:
+  name: hf-internal-testing/tiny-random-LlamaForCausalLM
+  context_length: 256
+  compactor:
+    num_latents: 16
+
+training:
+  steps: 5
+  batch_size: 1
+  learning_rate: 1.0e-4
+
+data:
+  train_file: data/mcq/train.jsonl
+  validation_file: data/mcq/validation.jsonl
+  limit_validation: 8
