@@ -4,11 +4,8 @@
 from __future__ import annotations
 
 import argparse
-import os
-from pathlib import Path
 
-from huggingface_hub import snapshot_download
-
+from neural_kv.utils.hf_cache import configure_hf_cache
 from neural_kv.utils.storage import check_storage_quota, default_storage_roots
 
 
@@ -36,7 +33,10 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    os.environ.setdefault("HF_HOME", str(Path("data/hf_cache")))
+    configure_hf_cache()
+
+    from huggingface_hub import snapshot_download
+
     before = check_storage_quota(default_storage_roots(), args.max_storage)
     print(f"storage before model download: {before.summary()}", flush=True)
     path = snapshot_download(

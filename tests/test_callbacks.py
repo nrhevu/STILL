@@ -23,10 +23,12 @@ def test_legacy_checkpoint_payload_contains_train_still_fields() -> None:
             "sink_tokens": 0,
             "exact_tokens": 0,
             "exact_strategy": "prefix",
+            "exact_beta": 8.0,
             "num_blocks": 2,
             "layer_compactor_groups": 0,
             "head_specific_latents": False,
             "beta_base": "zero",
+            "beta_init": -8.0,
             "latent_dropout": 0.0,
         },
         model_name="Qwen/Qwen3-4B",
@@ -55,5 +57,7 @@ def test_legacy_checkpoint_payload_contains_train_still_fields() -> None:
     assert payload["step"] == 800
     assert payload["model"] == "Qwen/Qwen3-4B"
     assert payload["num_latents"] == 1024
+    assert payload["beta_init"] == -8.0
+    assert payload["exact_beta"] == 8.0
     assert payload["balanced_answer_sampling"] is True
     assert payload["state_dict"]["weight"].item() == 1.0

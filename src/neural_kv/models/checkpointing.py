@@ -22,9 +22,11 @@ def legacy_compactor_config(checkpoint: dict[str, Any]) -> dict[str, Any]:
         "sink_tokens": int(checkpoint.get("sink_tokens", 0)),
         "exact_tokens": int(checkpoint.get("exact_tokens", 0)),
         "exact_strategy": str(checkpoint.get("exact_strategy", "prefix")),
+        "exact_beta": float(checkpoint.get("exact_beta", 0.0)),
         "num_blocks": int(checkpoint.get("num_blocks", 2)),
         "latent_dropout": float(checkpoint.get("latent_dropout", 0.0)),
         "beta_base": str(checkpoint.get("beta_base", "zero")),
+        "beta_init": float(checkpoint.get("beta_init", 0.0)),
         "layer_compactor_groups": int(checkpoint.get("layer_compactor_groups", 0)),
         "head_specific_latents": bool(checkpoint.get("head_specific_latents", False)),
     }

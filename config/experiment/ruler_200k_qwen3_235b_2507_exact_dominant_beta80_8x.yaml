@@ -1,0 +1,62 @@
+# Exact-dominant diagnostic config with stronger exact-token attention bias.
+# 25k token budget per layer; lexical exact selection usually keeps the answer-bearing line.
+extends: ../base.yaml
+output_dir: checkpoints/ruler_200k_qwen3_235b_2507_exact_dominant_beta80_8x
+
+runtime:
+  dtype: bfloat16
+  model_load_device: auto
+  require_idle_gpu: false
+  max_storage: 10TB
+
+trainer:
+  accelerator: gpu
+  devices: 8
+  strategy: auto
+  precision: bf16-mixed
+  log_every_n_steps: 1
+  val_check_interval: 100
+
+model:
+  name: Qwen/Qwen3-235B-A22B-Instruct-2507
+  context_length: 200000
+  compactor:
+    num_latents: 1
+    num_blocks: 1
+    latent_dropout: 0.0
+    beta_base: zero
+    beta_init: -80.0
+    layer_compactor_groups: 1
+    sink_tokens: 0
+    exact_tokens: 24999
+    exact_strategy: lexical
+    exact_beta: 80.0
+    head_specific_latents: true
+
+training:
+  steps: 0
+  batch_size: 1
+  learning_rate: 2.0e-6
+  gradient_clip_val: 1.0
+  kl_weight: 1.0
+  reverse_kl_weight: 0.5
+  ce_weight: 0.1
+  aux_letter_loss_weight: 0.05
+  aux_letter_enable_thinking: false
+  loss_mode: token
+  target_mode: teacher_response
+  score_mode: letter
+  use_chat_template: true
+  enable_thinking: false
+  eval_enable_thinking: false
+  balanced_answer_sampling: true
+  trainable_scope: all
+  save_every: 100
+  eval_max_new_tokens: 64
+
+data:
+  train_file: data/ruler_200k/train.teacher.jsonl
+  validation_file: data/ruler_200k/validation.teacher.jsonl
+  limit_train: null
+  limit_validation: 64
+  num_workers: 0

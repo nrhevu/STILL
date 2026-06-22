@@ -204,6 +204,10 @@ def load_hf_texts(
     max_rows: int,
 ) -> list[str]:
     """Load text rows from Hugging Face Datasets lazily."""
+    from neural_kv.utils.hf_cache import configure_hf_cache
+
+    configure_hf_cache()
+
     from datasets import load_dataset
 
     dataset = load_dataset(dataset_name, dataset_config, split=split)

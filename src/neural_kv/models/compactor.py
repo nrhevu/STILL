@@ -119,6 +119,7 @@ class StillLayerCompactor(nn.Module):
         num_blocks: int = 2,
         latent_dropout: float = 0.0,
         beta_base: str = "log_compression",
+        beta_init: float = 0.0,
         num_key_value_heads: int = 0,
         head_specific_latents: bool = False,
     ) -> None:
@@ -133,6 +134,7 @@ class StillLayerCompactor(nn.Module):
         self.rope_theta = float(rope_theta)
         self.latent_dropout = float(latent_dropout)
         self.beta_base = beta_base
+        self.beta_init = float(beta_init)
         self.head_specific_latents = bool(head_specific_latents)
         self.num_key_value_heads = int(num_key_value_heads)
         if self.head_specific_latents and self.num_key_value_heads <= 0:
@@ -167,7 +169,7 @@ class StillLayerCompactor(nn.Module):
             self.value_head.weight.zero_()
             self.value_head.weight[:, self.head_dim :] = torch.eye(self.head_dim)
             self.beta_head.weight.zero_()
-            self.beta_head.bias.zero_()
+            self.beta_head.bias.fill_(self.beta_init)
 
     def forward(
         self,
@@ -243,10 +245,12 @@ class StillCompactor(nn.Module):
         num_blocks: int = 2,
         latent_dropout: float = 0.0,
         beta_base: str = "log_compression",
+        beta_init: float = 0.0,
         layer_compactor_groups: int = 0,
         sink_tokens: int = 0,
         exact_tokens: int = 0,
         exact_strategy: str = "prefix",
+        exact_beta: float = 0.0,
         num_key_value_heads: int = 0,
         head_specific_latents: bool = False,
     ) -> None:
@@ -263,6 +267,7 @@ class StillCompactor(nn.Module):
         self.exact_tokens = int(exact_tokens)
         if self.exact_tokens < 0:
             raise ValueError("exact_tokens must be non-negative")
+        self.exact_beta = float(exact_beta)
         if exact_strategy not in EXACT_TOKEN_STRATEGIES:
             raise ValueError(f"exact_strategy must be one of {sorted(EXACT_TOKEN_STRATEGIES)}")
         self.exact_strategy = exact_strategy
@@ -273,6 +278,7 @@ class StillCompactor(nn.Module):
             raise ValueError("layer_compactor_groups cannot exceed num_hidden_layers")
         self.layer_compactor_groups = groups
         self.beta_base = beta_base
+        self.beta_init = float(beta_init)
         self.layers = nn.ModuleList(
             [
                 StillLayerCompactor(
@@ -282,6 +288,7 @@ class StillCompactor(nn.Module):
                     num_blocks=num_blocks,
                     latent_dropout=latent_dropout,
                     beta_base=beta_base,
+                    beta_init=self.beta_init,
                     num_key_value_heads=self.num_key_value_heads,
                     head_specific_latents=self.head_specific_latents,
                 )
@@ -298,10 +305,12 @@ class StillCompactor(nn.Module):
         num_blocks: int = 2,
         latent_dropout: float = 0.0,
         beta_base: str = "log_compression",
+        beta_init: float = 0.0,
         layer_compactor_groups: int = 0,
         sink_tokens: int = 0,
         exact_tokens: int = 0,
         exact_strategy: str = "prefix",
+        exact_beta: float = 0.0,
         head_specific_latents: bool = False,
     ) -> StillCompactor:
         head_dim = getattr(config, "head_dim", config.hidden_size // config.num_attention_heads)
@@ -315,10 +324,12 @@ class StillCompactor(nn.Module):
             num_blocks=num_blocks,
             latent_dropout=latent_dropout,
             beta_base=beta_base,
+            beta_init=beta_init,
             layer_compactor_groups=layer_compactor_groups,
             sink_tokens=sink_tokens,
             exact_tokens=exact_tokens,
             exact_strategy=exact_strategy,
+            exact_beta=exact_beta,
             num_key_value_heads=int(num_key_value_heads),
             head_specific_latents=head_specific_latents,
         )
@@ -424,6 +435,10 @@ class StillCompactor(nn.Module):
         biases: list[torch.Tensor] = []
         for layer_index, (layer_keys, layer_values) in enumerate(normalized):
             layer_compactor = self.layers[self._layer_group_index(layer_index)]
+            layer_device = layer_keys.device
+            compactor_device = next(layer_compactor.parameters()).device
+            if compactor_device != layer_device:
+                layer_compactor.to(layer_device)
             compact_k, compact_v, beta = layer_compactor(layer_keys, layer_values)
             sink_count = 0
             if self.sink_tokens:
@@ -449,7 +464,7 @@ class StillCompactor(nn.Module):
             if exact_indices is not None:
                 exact_k = self._gather_exact_tokens(layer_keys, exact_indices)
                 exact_v = self._gather_exact_tokens(layer_values, exact_indices)
-                exact_beta = beta.new_zeros(*exact_k.shape[:-1])
+                exact_beta = beta.new_full(exact_k.shape[:-1], self.exact_beta)
                 prefix_tokens = sink_count
                 if prefix_tokens:
                     compact_k = torch.cat(
@@ -485,6 +500,7 @@ class StillCompactor(nn.Module):
         if self.exact_tokens:
             output_metadata["exact_tokens"] = self.exact_tokens
             output_metadata["exact_strategy"] = self.exact_strategy
+            output_metadata["exact_beta"] = self.exact_beta
         if self.sink_tokens or self.exact_tokens:
             output_metadata["latent_tokens"] = self.num_latents
         return CompactKVCache(

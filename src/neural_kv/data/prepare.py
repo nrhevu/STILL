@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import os
 from pathlib import Path
 
 from neural_kv.data import (
@@ -15,6 +14,7 @@ from neural_kv.data import (
     write_jsonl,
 )
 from neural_kv.storage import check_storage_quota, default_storage_roots
+from neural_kv.utils.hf_cache import configure_hf_cache, default_hf_home
 
 DEFAULT_GUTENBERG_IDS = [
     1342,   # Pride and Prejudice
@@ -43,7 +43,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dataset-config", default="wikitext-103-raw-v1")
     parser.add_argument("--text-field", default="text")
     parser.add_argument("--output-dir", default="data/mcq")
-    parser.add_argument("--hf-cache-dir", default="data/hf_cache")
+    parser.add_argument("--hf-cache-dir", default=str(default_hf_home()))
     parser.add_argument("--raw-dir", default="data/raw")
     parser.add_argument(
         "--gutenberg-ids",
@@ -63,12 +63,9 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     output_dir = Path(args.output_dir)
-    hf_cache_dir = Path(args.hf_cache_dir)
+    hf_cache_dir = configure_hf_cache(args.hf_cache_dir)
     hf_cache_dir.mkdir(parents=True, exist_ok=True)
     output_dir.mkdir(parents=True, exist_ok=True)
-
-    os.environ.setdefault("HF_HOME", str(hf_cache_dir))
-    os.environ.setdefault("HF_DATASETS_CACHE", str(hf_cache_dir / "datasets"))
 
     roots = default_storage_roots()
     before = check_storage_quota(roots, args.max_storage)

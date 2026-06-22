@@ -7,10 +7,9 @@ import argparse
 import random
 from pathlib import Path
 
-from datasets import load_dataset
-
 from neural_kv.data import MCQExample, stable_id, write_jsonl
 from neural_kv.storage import check_storage_quota, default_storage_roots
+from neural_kv.utils.hf_cache import configure_hf_cache
 
 
 def parse_args() -> argparse.Namespace:
@@ -26,6 +25,10 @@ def parse_args() -> argparse.Namespace:
 
 
 def _load_squad_rows(split: str) -> list[dict[str, object]]:
+    configure_hf_cache()
+
+    from datasets import load_dataset
+
     rows = []
     for row in load_dataset("squad", split=split):
         answers = row.get("answers", {}).get("text", [])

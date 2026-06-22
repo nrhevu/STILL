@@ -8,6 +8,8 @@ def test_parse_legacy_compactor_checkpoint() -> None:
         "model": "base-model",
         "context_length": 128,
         "num_latents": 4,
+        "beta_init": -8.0,
+        "exact_beta": 8.0,
         "state_dict": {"layers.0.latents": torch.zeros(4, 8)},
     }
 
@@ -16,6 +18,8 @@ def test_parse_legacy_compactor_checkpoint() -> None:
     assert spec.model_name == "base-model"
     assert spec.context_length == 128
     assert spec.compactor["num_latents"] == 4
+    assert spec.compactor["beta_init"] == -8.0
+    assert spec.compactor["exact_beta"] == 8.0
     assert "layers.0.latents" in spec.state_dict
 
 

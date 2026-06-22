@@ -30,6 +30,22 @@ def test_layer_compactor_zero_beta_base_initializes_zero_bias() -> None:
     assert torch.allclose(beta, torch.zeros_like(beta), atol=1e-6)
 
 
+def test_layer_compactor_beta_init_sets_initial_bias() -> None:
+    layer = StillLayerCompactor(
+        head_dim=8,
+        num_latents=4,
+        rope_theta=10000.0,
+        beta_base="zero",
+        beta_init=-8.0,
+    )
+    keys = torch.randn(1, 1, 16, 8)
+    values = torch.randn(1, 1, 16, 8)
+
+    _, _, beta = layer(keys, values)
+
+    assert torch.allclose(beta, torch.full_like(beta, -8.0), atol=1e-6)
+
+
 def test_layer_compactor_log_beta_base_matches_compression_ratio() -> None:
     layer = StillLayerCompactor(
         head_dim=8,
@@ -162,6 +178,56 @@ def test_full_compactor_can_prepend_even_exact_tokens_after_sink() -> None:
     assert cache.metadata["exact_tokens"] == 3
     assert cache.metadata["exact_strategy"] == "even"
     assert cache.metadata["latent_tokens"] == 2
+
+
+def test_full_compactor_keeps_exact_bias_zero_with_negative_latents() -> None:
+    compactor = StillCompactor(
+        num_hidden_layers=1,
+        head_dim=2,
+        num_latents=2,
+        rope_theta=10000.0,
+        beta_base="zero",
+        beta_init=-8.0,
+        exact_tokens=2,
+        exact_strategy="even",
+    )
+    keys = torch.arange(1 * 1 * 8 * 2, dtype=torch.float32).reshape(1, 1, 8, 2)
+    values = keys + 100.0
+
+    cache = compactor(((keys, values),))
+
+    assert cache.num_tokens == 4
+    assert torch.allclose(cache.keys[0][..., :2, :], keys[..., [0, 7], :])
+    assert torch.allclose(cache.values[0][..., :2, :], values[..., [0, 7], :])
+    assert torch.allclose(cache.biases[0][..., :2], torch.zeros_like(cache.biases[0][..., :2]))
+    assert torch.allclose(
+        cache.biases[0][..., 2:],
+        torch.full_like(cache.biases[0][..., 2:], -8.0),
+    )
+    assert cache.metadata["exact_tokens"] == 2
+    assert cache.metadata["latent_tokens"] == 2
+
+
+def test_full_compactor_can_boost_exact_token_bias() -> None:
+    compactor = StillCompactor(
+        num_hidden_layers=1,
+        head_dim=2,
+        num_latents=1,
+        rope_theta=10000.0,
+        beta_base="zero",
+        beta_init=-8.0,
+        exact_tokens=2,
+        exact_strategy="even",
+        exact_beta=8.0,
+    )
+    keys = torch.arange(1 * 1 * 8 * 2, dtype=torch.float32).reshape(1, 1, 8, 2)
+    values = keys + 100.0
+
+    cache = compactor(((keys, values),))
+
+    assert torch.allclose(cache.biases[0][..., :2], torch.full_like(cache.biases[0][..., :2], 8.0))
+    assert torch.allclose(cache.biases[0][..., 2:], torch.full_like(cache.biases[0][..., 2:], -8.0))
+    assert cache.metadata["exact_beta"] == 8.0
 
 
 def test_full_compactor_can_select_kv_norm_exact_tokens_per_head() -> None:

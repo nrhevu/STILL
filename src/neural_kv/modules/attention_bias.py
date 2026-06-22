@@ -105,16 +105,20 @@ def merge_still_bias(
     if num_heads % kv_heads != 0:
         raise ValueError(f"Cannot repeat {kv_heads} KV-head beta values to {num_heads} query heads")
 
-    beta = beta.to(dtype=(hidden_states.dtype if hidden_states is not None else torch.float32))
+    target_device = hidden_states.device if hidden_states is not None else beta.device
+    beta = beta.to(
+        device=target_device,
+        dtype=(hidden_states.dtype if hidden_states is not None else torch.float32),
+    )
     beta = beta.repeat_interleave(num_heads // kv_heads, dim=1)
     beta = beta.unsqueeze(-2).expand(batch, num_heads, query_len, compact_tokens)
 
     if attention_mask is None:
         return beta
 
-    mask = attention_mask
+    mask = attention_mask.to(device=target_device)
     if mask.dtype == torch.bool:
-        additive = torch.zeros(mask.shape, device=mask.device, dtype=beta.dtype)
+        additive = torch.zeros(mask.shape, device=target_device, dtype=beta.dtype)
         additive = additive.masked_fill(~mask, torch.finfo(beta.dtype).min)
     else:
         additive = mask.to(dtype=beta.dtype)

@@ -14,6 +14,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--min-compact-accuracy", type=float, default=0.85)
     parser.add_argument("--min-compression", type=float, default=8.0)
     parser.add_argument("--min-utilization", type=float, default=0.90)
+    parser.add_argument(
+        "--min-full-accuracy",
+        type=float,
+        default=None,
+        help="Optional full-context baseline gate, e.g. 0.98 for RULER primary tasks.",
+    )
     return parser.parse_args()
 
 
@@ -46,6 +52,14 @@ def main() -> None:
             f"{mean_compression} >= {args.min_compression}",
         )
     )
+    if args.min_full_accuracy is not None:
+        checks.append(
+            (
+                "full_accuracy",
+                full_accuracy is not None and full_accuracy >= args.min_full_accuracy,
+                f"{full_accuracy} >= {args.min_full_accuracy}",
+            )
+        )
 
     has_utilization_inputs = (
         no_context_accuracy is not None

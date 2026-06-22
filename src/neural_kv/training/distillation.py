@@ -1,4 +1,5 @@
 """Hugging Face training/evaluation helpers for STILL."""
+# ruff: noqa: E402
 
 from __future__ import annotations
 
@@ -7,6 +8,11 @@ from dataclasses import dataclass
 
 import torch
 import torch.nn.functional as F
+
+from neural_kv.utils.hf_cache import configure_hf_cache
+
+configure_hf_cache()
+
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from neural_kv.data import answer_letter, format_mcq_prompt
@@ -203,16 +209,20 @@ def load_model_and_tokenizer(
     *,
     device: str,
     dtype: torch.dtype,
+    device_map: str | None = None,
 ):
     tokenizer = AutoTokenizer.from_pretrained(model_name, use_fast=True)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
-    model = AutoModelForCausalLM.from_pretrained(
-        model_name,
-        torch_dtype=dtype if device.startswith("cuda") else torch.float32,
-        low_cpu_mem_usage=True,
-    )
-    model.to(device)
+    model_kwargs = {
+        "torch_dtype": dtype if device.startswith("cuda") or device_map else torch.float32,
+        "low_cpu_mem_usage": True,
+    }
+    if device_map:
+        model_kwargs["device_map"] = device_map
+    model = AutoModelForCausalLM.from_pretrained(model_name, **model_kwargs)
+    if not device_map:
+        model.to(device)
     model.eval()
     for parameter in model.parameters():
         parameter.requires_grad_(False)
@@ -1268,6 +1278,141 @@ def score_mcq_letters(
         "cache_tokens": float(cache_tokens),
         "compression": float(source_tokens / max(cache_tokens, 1)),
         "used_chat_template": float(encoded.used_chat_template),
+    }
+
+
+def _cached_letter_logits(
+    *,
+    model,
+    tokenizer,
+    encoded: EncodedMCQ,
+    past_key_values,
+    source_tokens: int,
+    cache_tokens: int,
+    device: str,
+    biases: list[torch.Tensor] | None = None,
+) -> torch.Tensor:
+    prompt_len = int(encoded.prompt_ids.shape[-1])
+    label_ids = _letter_ids(
+        tokenizer,
+        target_prefix=encoded.target_prefix,
+        device=device,
+    )
+    outputs = _forward_with_optional_biases(
+        model,
+        biases,
+        input_ids=encoded.prompt_ids,
+        past_key_values=past_key_values,
+        attention_mask=_attention_mask(
+            cache_tokens,
+            prompt_len,
+            device=device,
+        ),
+        position_ids=_position_ids(
+            source_tokens,
+            prompt_len,
+            device=device,
+        ),
+        use_cache=False,
+    )
+    return outputs.logits[0, prompt_len - 1, label_ids].float()
+
+
+@torch.no_grad()
+def score_mcq_full_and_compact_letters(
+    *,
+    model,
+    tokenizer,
+    row: dict[str, object],
+    context_length: int,
+    device: str,
+    compactor: StillCompactor,
+    score_mode: str = "letter",
+    use_chat_template: bool = True,
+    enable_thinking: bool = False,
+) -> tuple[str, str, dict[str, float]]:
+    if score_mode not in {"letter", "letter_delta"}:
+        raise ValueError("paired full/compact scoring only supports letter modes")
+    encoded = encode_mcq(
+        tokenizer,
+        row,
+        context_length=context_length,
+        device=device,
+        target_mode="letter",
+        use_chat_template=use_chat_template,
+        enable_thinking=enable_thinking,
+    )
+    source_tokens = int(encoded.context_ids.shape[-1])
+    full_outputs = model(input_ids=encoded.context_ids, use_cache=True)
+    compact_cache = compactor(
+        full_outputs.past_key_values,
+        metadata={"source_tokens": source_tokens},
+        exact_token_indices=_exact_token_indices_for_compactor(
+            tokenizer,
+            row,
+            encoded,
+            compactor,
+            device=device,
+        ),
+    )
+
+    full_logits = _cached_letter_logits(
+        model=model,
+        tokenizer=tokenizer,
+        encoded=encoded,
+        past_key_values=_fresh_dynamic_cache(full_outputs.past_key_values),
+        source_tokens=source_tokens,
+        cache_tokens=source_tokens,
+        device=device,
+    )
+    compact_logits = _cached_letter_logits(
+        model=model,
+        tokenizer=tokenizer,
+        encoded=encoded,
+        past_key_values=compact_cache.as_dynamic_cache(),
+        source_tokens=source_tokens,
+        cache_tokens=compact_cache.num_tokens,
+        device=device,
+        biases=compact_cache.biases,
+    )
+
+    if score_mode == "letter_delta":
+        no_context_prompt_ids, no_context_prefix = _encode_no_context_prompt(
+            tokenizer,
+            row,
+            device=device,
+            use_chat_template=use_chat_template,
+            enable_thinking=enable_thinking,
+        )
+        no_context_label_ids = _letter_ids(
+            tokenizer,
+            target_prefix=no_context_prefix,
+            device=device,
+        )
+        no_context_outputs = model(input_ids=no_context_prompt_ids, use_cache=False)
+        no_context_logits = no_context_outputs.logits[
+            0,
+            no_context_prompt_ids.shape[-1] - 1,
+            no_context_label_ids,
+        ].float()
+        full_logits = full_logits - no_context_logits
+        compact_logits = compact_logits - no_context_logits
+
+    full = "ABCD"[int(torch.argmax(full_logits).item())]
+    compact = "ABCD"[int(torch.argmax(compact_logits).item())]
+    return full, compact, {
+        "source_tokens": float(source_tokens),
+        "cache_tokens": float(compact_cache.num_tokens),
+        "compression": float(source_tokens / max(compact_cache.num_tokens, 1)),
+        "used_chat_template": float(encoded.used_chat_template),
+        "full_letter_logits": {
+            label: float(value)
+            for label, value in zip("ABCD", full_logits.detach().cpu().tolist(), strict=True)
+        },
+        "compact_letter_logits": {
+            label: float(value)
+            for label, value in zip("ABCD", compact_logits.detach().cpu().tolist(), strict=True)
+        },
     }
 
 
