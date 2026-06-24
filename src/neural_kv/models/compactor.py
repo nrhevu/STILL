@@ -313,8 +313,12 @@ class StillCompactor(nn.Module):
         exact_beta: float = 0.0,
         head_specific_latents: bool = False,
     ) -> StillCompactor:
-        head_dim = getattr(config, "head_dim", config.hidden_size // config.num_attention_heads)
-        num_key_value_heads = getattr(config, "num_key_value_heads", config.num_attention_heads)
+        config = getattr(config, "text_config", config)
+        head_dim = getattr(config, "head_dim", None)
+        if head_dim is None:
+            head_dim = int(config.hidden_size) // int(config.num_attention_heads)
+        num_attention_heads = int(config.num_attention_heads)
+        num_key_value_heads = getattr(config, "num_key_value_heads", num_attention_heads)
         rope_theta = float(getattr(config, "rope_theta", 10000.0))
         return cls(
             num_hidden_layers=int(config.num_hidden_layers),

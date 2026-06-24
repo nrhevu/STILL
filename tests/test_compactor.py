@@ -310,3 +310,22 @@ def test_grouped_compactor_rejects_too_many_groups() -> None:
         assert "cannot exceed" in str(exc)
     else:
         raise AssertionError("expected too many layer compactor groups to fail")
+
+
+
+def test_compactor_from_multimodal_text_config() -> None:
+    class TextConfig:
+        hidden_size = 64
+        num_attention_heads = 4
+        num_hidden_layers = 2
+        num_key_value_heads = 2
+        rope_theta = 5000000
+
+    class VLMConfig:
+        text_config = TextConfig()
+
+    compactor = StillCompactor.from_model_config(VLMConfig(), num_latents=3)
+
+    assert compactor.num_hidden_layers == 2
+    assert compactor.num_key_value_heads == 2
+    assert compactor.layers[0].head_dim == 16

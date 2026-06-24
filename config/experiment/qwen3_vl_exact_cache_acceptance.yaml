@@ -1,0 +1,46 @@
+seed: 7
+output_dir: outputs/qwen3_vl_exact_cache_acceptance
+
+runtime:
+  dtype: bfloat16
+  model_load_device: auto
+  device_map_auto: true
+  preferred_gpu: 7
+  require_idle_gpu: true
+  wait_for_idle_gpu: true
+  gpu_poll_seconds: 60
+
+model:
+  name: Qwen/Qwen3-VL-8B-Instruct
+  trust_remote_code: true
+  compactor:
+    num_latents: 1
+    num_blocks: 1
+    latent_dropout: 0.0
+    beta_base: zero
+    beta_init: -80.0
+    layer_compactor_groups: 1
+    sink_tokens: 0
+    exact_tokens: 200000
+    exact_strategy: even
+    exact_beta: 0.0
+    head_specific_latents: false
+
+benchmark:
+  checkpoint: ""
+  init_random_compactor: true
+  details_file: outputs/qwen3_vl_exact_cache_acceptance/details.jsonl
+  summary_file: outputs/qwen3_vl_exact_cache_acceptance/summary.json
+  archive_dir: reports/vlm_compactor
+  limit_per_dataset: 1
+  max_new_tokens: 1
+  no_think: true
+  target_compact_vs_full_accuracy: 0.95
+  fail_under_target: true
+  resolutions: [448]
+  image_token_budgets: [256]
+  datasets:
+    - task: mmmu
+      name: MMMU/MMMU
+      configs: [Accounting]
+      split: validation

@@ -1,0 +1,50 @@
+seed: 7
+output_dir: outputs/qwen3_vl_compactor_bench
+
+runtime:
+  dtype: bfloat16
+  model_load_device: auto
+  device_map_auto: true
+  preferred_gpu: 7
+  require_idle_gpu: true
+  wait_for_idle_gpu: true
+  gpu_poll_seconds: 60
+
+model:
+  name: Qwen/Qwen3-VL-8B-Instruct
+  trust_remote_code: true
+  compactor:
+    num_latents: 1024
+    num_blocks: 2
+    latent_dropout: 0.0
+    beta_base: zero
+    layer_compactor_groups: 0
+    sink_tokens: 64
+    exact_tokens: 0
+    exact_strategy: prefix
+    head_specific_latents: false
+
+benchmark:
+  checkpoint: ""
+  init_random_compactor: false
+  details_file: outputs/qwen3_vl_compactor_bench/details.jsonl
+  summary_file: outputs/qwen3_vl_compactor_bench/summary.json
+  archive_dir: reports/vlm_compactor
+  limit_per_dataset: 16
+  max_new_tokens: 32
+  no_think: true
+  target_compact_vs_full_accuracy: 0.95
+  fail_under_target: true
+  resolutions: [448, 672, 896, 1344]
+  image_token_budgets: [256, 576, 1024, 2304]
+  datasets:
+    - task: mmmu
+      name: MMMU/MMMU
+      configs: [Accounting]
+      split: validation
+    - task: docvqa
+      name: lmms-lab/DocVQA
+      split: validation
+    - task: chartqa
+      name: HuggingFaceM4/ChartQA
+      split: val

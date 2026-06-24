@@ -25,6 +25,7 @@ train = [
   "safetensors>=0.5,<1",
   "sentencepiece>=0.2,<1",
   "torch==2.11.0 ; sys_platform == 'linux'",
+  "torchvision>=0.26,<0.28 ; sys_platform == 'linux'",
   "transformers>=4.51,<5",
   "triton-rocm==3.6.0 ; sys_platform == 'linux'",
 ]
@@ -52,6 +53,9 @@ torch = [
   { index = "pytorch-rocm", marker = "sys_platform == 'linux'" },
 ]
 triton-rocm = [
+  { index = "pytorch-rocm", marker = "sys_platform == 'linux'" },
+]
+torchvision = [
   { index = "pytorch-rocm", marker = "sys_platform == 'linux'" },
 ]
 

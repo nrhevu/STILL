@@ -1,0 +1,29 @@
+{
+  "checks": [
+    {
+      "detail": "1 >= 1",
+      "name": "rows",
+      "passed": true
+    },
+    {
+      "detail": "1 >= 1",
+      "name": "full_reference_rows",
+      "passed": true
+    },
+    {
+      "detail": "1.0 >= 0.95 (compact=0.0, full=0.0)",
+      "name": "compact_full_agreement",
+      "passed": true
+    },
+    {
+      "detail": "all groups >= 0.95",
+      "name": "group_compact_full_agreement",
+      "passed": true
+    }
+  ],
+  "details": "details.jsonl",
+  "min_compact_vs_full_accuracy": 0.95,
+  "source_details": "/scratch/vunguyen13/KVCacheProject/neural-kv-rewrite/outputs/qwen3_vl_exact_cache_acceptance/details.jsonl",
+  "source_summary": "/scratch/vunguyen13/KVCacheProject/neural-kv-rewrite/outputs/qwen3_vl_exact_cache_acceptance/summary.json",
+  "summary": "summary.json"
+}

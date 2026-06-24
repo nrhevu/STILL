@@ -1,0 +1,35 @@
+{
+  "aggregate_target_passed": true,
+  "checkpoint": "",
+  "compact_accuracy": 0.0,
+  "compact_full_agreement": 1.0,
+  "compact_vs_full_accuracy": null,
+  "count": 1,
+  "details_file": "outputs/qwen3_vl_exact_cache_acceptance/details.jsonl",
+  "failing_groups": [],
+  "full_accuracy": 0.0,
+  "full_reference_count": 1,
+  "groups": [
+    {
+      "avg_compact_seconds": 0.2863127461168915,
+      "avg_compact_tokens": 338.0,
+      "avg_compression": 0.985207100591716,
+      "avg_full_seconds": 13.497690567979589,
+      "avg_source_tokens": 333.0,
+      "avg_visual_tokens": 800.0,
+      "compact_accuracy": 0.0,
+      "compact_full_agreement": 1.0,
+      "compact_vs_full_accuracy": null,
+      "count": 1,
+      "full_accuracy": 0.0,
+      "full_reference_count": 1,
+      "image_token_budget": 256,
+      "resolution": 448,
+      "target_passed": true,
+      "task": "mmmu"
+    }
+  ],
+  "model": "Qwen/Qwen3-VL-8B-Instruct",
+  "target_compact_vs_full_accuracy": 0.95,
+  "target_passed": true
+}
