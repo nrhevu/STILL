@@ -15,6 +15,38 @@ def test_layer_compactor_shapes_and_initial_copy_bias() -> None:
     assert beta.shape == (2, 3, 4)
 
 
+def test_layer_compactor_accepts_rope_mode_none() -> None:
+    layer = StillLayerCompactor(
+        head_dim=8,
+        num_latents=4,
+        rope_theta=10000.0,
+        rope_mode="none",
+    )
+    keys = torch.randn(1, 2, 12, 8)
+    values = torch.randn(1, 2, 12, 8)
+
+    compact_keys, compact_values, beta = layer(keys, values)
+
+    assert layer.rope_mode == "none"
+    assert compact_keys.shape == (1, 2, 4, 8)
+    assert compact_values.shape == (1, 2, 4, 8)
+    assert beta.shape == (1, 2, 4)
+
+
+def test_layer_compactor_rejects_invalid_rope_mode() -> None:
+    try:
+        StillLayerCompactor(
+            head_dim=8,
+            num_latents=4,
+            rope_theta=10000.0,
+            rope_mode="mrope",
+        )
+    except ValueError as exc:
+        assert "rope_mode" in str(exc)
+    else:
+        raise AssertionError("expected invalid rope_mode to fail")
+
+
 def test_layer_compactor_zero_beta_base_initializes_zero_bias() -> None:
     layer = StillLayerCompactor(
         head_dim=8,

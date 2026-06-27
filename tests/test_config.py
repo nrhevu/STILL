@@ -29,3 +29,21 @@ def test_ruler_200k_qwen3_235b_config_targets_8x() -> None:
     assert config["training"]["target_mode"] == "teacher_response"
     assert config["training"]["eval_enable_thinking"] is False
     assert config["data"]["train_file"] == "data/ruler_200k/train.teacher.jsonl"
+
+
+def test_vlm_qwen3_vl_config_uses_last_four_gpu_setup_and_gates() -> None:
+    config = load_config(Path("config/experiment/vlm_qwen3_vl_8b_scienceqa_4gpu.yaml"))
+
+    assert config["model"]["name"] == "Qwen/Qwen3-VL-8B-Instruct"
+    assert config["trainer"]["devices"] == 4
+    assert config["trainer"]["strategy"] == "ddp"
+    compactor = config["model"]["compactor"]
+    assert compactor["num_latents"] == 1024
+    assert compactor["sink_tokens"] == 8
+    assert compactor["exact_tokens"] == 128
+    assert compactor["exact_strategy"] == "kv_norm"
+    assert compactor["rope_mode"] == "none"
+    gates = config["gates"]
+    assert [gate["min_full_accuracy"] for gate in gates] == [0.75, 0.60, 0.55]
+    assert [gate["min_rows"] for gate in gates] == [256, 150, 847]
+    assert gates[2]["summary_file"].endswith("mmmu_validation_generation_qwen_mmmu_lmms_cli.json")

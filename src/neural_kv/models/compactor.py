@@ -11,6 +11,22 @@ from neural_kv.modules.cache import CompactKVCache, normalize_past_key_values
 from neural_kv.modules.rope import apply_rope, evenly_spaced_positions
 
 EXACT_TOKEN_STRATEGIES = {"prefix", "even", "kv_norm", "lexical"}
+ROPE_MODES = {"default", "none"}
+
+
+def _apply_rope_mode(
+    x: torch.Tensor,
+    positions: torch.Tensor,
+    *,
+    theta: float,
+    rope_mode: str,
+    inverse: bool = False,
+) -> torch.Tensor:
+    if rope_mode == "none":
+        return x
+    if rope_mode == "default":
+        return apply_rope(x, positions, theta=theta, inverse=inverse)
+    raise ValueError(f"Unsupported rope_mode: {rope_mode}")
 
 
 class LatentSelfAttention(nn.Module):
@@ -37,10 +53,18 @@ class LatentSelfAttention(nn.Module):
 class LatentCrossAttention(nn.Module):
     """RoPE-aware latent cross-attention into concatenated ``[K_unrotated; V]``."""
 
-    def __init__(self, *, dim: int, rope_theta: float, active_identity_path: bool) -> None:
+    def __init__(
+        self,
+        *,
+        dim: int,
+        rope_theta: float,
+        rope_mode: str,
+        active_identity_path: bool,
+    ) -> None:
         super().__init__()
         self.dim = dim
         self.rope_theta = rope_theta
+        self.rope_mode = rope_mode
         self.q_proj = nn.Linear(dim, dim, bias=True)
         self.k_proj = nn.Linear(dim, dim, bias=True)
         self.v_proj = nn.Linear(dim, dim, bias=False)
@@ -68,8 +92,18 @@ class LatentCrossAttention(nn.Module):
         latent_positions: torch.Tensor,
         token_positions: torch.Tensor,
     ) -> torch.Tensor:
-        q = apply_rope(self.q_proj(latents), latent_positions, theta=self.rope_theta)
-        k = apply_rope(self.k_proj(kv_input), token_positions, theta=self.rope_theta)
+        q = _apply_rope_mode(
+            self.q_proj(latents),
+            latent_positions,
+            theta=self.rope_theta,
+            rope_mode=self.rope_mode,
+        )
+        k = _apply_rope_mode(
+            self.k_proj(kv_input),
+            token_positions,
+            theta=self.rope_theta,
+            rope_mode=self.rope_mode,
+        )
         v = self.v_proj(kv_input)
         scale = 1.0 / math.sqrt(self.dim)
         weights = torch.softmax(torch.matmul(q, k.transpose(-1, -2)) * scale, dim=-1)
@@ -79,11 +113,19 @@ class LatentCrossAttention(nn.Module):
 class PerceiverBlock(nn.Module):
     """One STILL perceiver block: cross-attend, then coordinate latents."""
 
-    def __init__(self, *, dim: int, rope_theta: float, active_identity_path: bool) -> None:
+    def __init__(
+        self,
+        *,
+        dim: int,
+        rope_theta: float,
+        rope_mode: str = "default",
+        active_identity_path: bool,
+    ) -> None:
         super().__init__()
         self.cross_attn = LatentCrossAttention(
             dim=dim,
             rope_theta=rope_theta,
+            rope_mode=rope_mode,
             active_identity_path=active_identity_path,
         )
         self.cross_norm = nn.RMSNorm(dim)
@@ -122,16 +164,20 @@ class StillLayerCompactor(nn.Module):
         beta_init: float = 0.0,
         num_key_value_heads: int = 0,
         head_specific_latents: bool = False,
+        rope_mode: str = "default",
     ) -> None:
         super().__init__()
         if num_blocks <= 0:
             raise ValueError("num_blocks must be positive")
         if beta_base not in {"log_compression", "zero"}:
             raise ValueError("beta_base must be 'log_compression' or 'zero'")
+        if rope_mode not in ROPE_MODES:
+            raise ValueError(f"rope_mode must be one of {sorted(ROPE_MODES)}")
         self.head_dim = int(head_dim)
         self.num_latents = int(num_latents)
         self.latent_dim = self.head_dim * 2
         self.rope_theta = float(rope_theta)
+        self.rope_mode = rope_mode
         self.latent_dropout = float(latent_dropout)
         self.beta_base = beta_base
         self.beta_init = float(beta_init)
@@ -151,6 +197,7 @@ class StillLayerCompactor(nn.Module):
                 PerceiverBlock(
                     dim=self.latent_dim,
                     rope_theta=self.rope_theta,
+                    rope_mode=self.rope_mode,
                     active_identity_path=(idx == 0),
                 )
                 for idx in range(num_blocks)
@@ -194,7 +241,13 @@ class StillLayerCompactor(nn.Module):
         token_positions = torch.arange(seq_len, device=keys.device, dtype=torch.long)
         latent_positions = evenly_spaced_positions(self.num_latents, seq_len, keys.device)
 
-        unrotated_keys = apply_rope(keys, token_positions, theta=self.rope_theta, inverse=True)
+        unrotated_keys = _apply_rope_mode(
+            keys,
+            token_positions,
+            theta=self.rope_theta,
+            rope_mode=self.rope_mode,
+            inverse=True,
+        )
         kv_input = torch.cat([unrotated_keys, values], dim=-1)
         kv_input = kv_input.reshape(batch * heads, seq_len, self.latent_dim).to(module_dtype)
         if self.head_specific_latents:
@@ -224,7 +277,12 @@ class StillLayerCompactor(nn.Module):
         beta = self.beta_head(latents).squeeze(-1)
         if self.beta_base == "log_compression":
             beta = beta + math.log(max(seq_len / self.num_latents, 1e-6))
-        compact_keys = apply_rope(compact_keys, latent_positions, theta=self.rope_theta)
+        compact_keys = _apply_rope_mode(
+            compact_keys,
+            latent_positions,
+            theta=self.rope_theta,
+            rope_mode=self.rope_mode,
+        )
 
         compact_keys = compact_keys.reshape(batch, heads, self.num_latents, head_dim).to(dtype)
         compact_values = compact_values.reshape(batch, heads, self.num_latents, head_dim).to(dtype)
@@ -253,10 +311,14 @@ class StillCompactor(nn.Module):
         exact_beta: float = 0.0,
         num_key_value_heads: int = 0,
         head_specific_latents: bool = False,
+        rope_mode: str = "default",
     ) -> None:
         super().__init__()
+        if rope_mode not in ROPE_MODES:
+            raise ValueError(f"rope_mode must be one of {sorted(ROPE_MODES)}")
         self.num_hidden_layers = int(num_hidden_layers)
         self.num_latents = int(num_latents)
+        self.rope_mode = rope_mode
         self.num_key_value_heads = int(num_key_value_heads)
         self.head_specific_latents = bool(head_specific_latents)
         if self.head_specific_latents and self.num_key_value_heads <= 0:
@@ -291,6 +353,7 @@ class StillCompactor(nn.Module):
                     beta_init=self.beta_init,
                     num_key_value_heads=self.num_key_value_heads,
                     head_specific_latents=self.head_specific_latents,
+                    rope_mode=self.rope_mode,
                 )
                 for _ in range(groups)
             ]
@@ -312,6 +375,7 @@ class StillCompactor(nn.Module):
         exact_strategy: str = "prefix",
         exact_beta: float = 0.0,
         head_specific_latents: bool = False,
+        rope_mode: str = "default",
     ) -> StillCompactor:
         head_dim = getattr(config, "head_dim", config.hidden_size // config.num_attention_heads)
         num_key_value_heads = getattr(config, "num_key_value_heads", config.num_attention_heads)
@@ -332,6 +396,7 @@ class StillCompactor(nn.Module):
             exact_beta=exact_beta,
             num_key_value_heads=int(num_key_value_heads),
             head_specific_latents=head_specific_latents,
+            rope_mode=rope_mode,
         )
 
     def _layer_group_index(self, layer_index: int) -> int:

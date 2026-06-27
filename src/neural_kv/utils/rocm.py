@@ -12,6 +12,7 @@ from pathlib import Path
 
 _USAGE_KEY_RE = re.compile(r"(?:use|util|busy).*%?", re.IGNORECASE)
 _PERCENT_RE = re.compile(r"GPU\[(\d+)\].*?(\d+(?:\.\d+)?)%")
+LAST_FOUR_GPUS = (4, 5, 6, 7)
 
 
 def _extract_usage_values(payload: object) -> dict[int, float]:
@@ -81,6 +82,51 @@ def apply_visible_device_for_idle_gpu(
     if selected is not None:
         os.environ["HIP_VISIBLE_DEVICES"] = str(selected)
     return selected
+
+
+def _parse_visible_devices(value: str) -> tuple[int, ...]:
+    devices: list[int] = []
+    for item in value.split(","):
+        stripped = item.strip()
+        if not stripped:
+            continue
+        if not stripped.isdigit():
+            raise ValueError(f"Visible GPU entry {stripped!r} is not a physical GPU index")
+        devices.append(int(stripped))
+    return tuple(devices)
+
+
+def ensure_last_four_gpu_visibility(
+    *,
+    required: tuple[int, ...] = LAST_FOUR_GPUS,
+    set_if_unset: bool = True,
+) -> str:
+    """Set a default VLM GPU set, while respecting user-selected GPUs.
+
+    Historically VLM scripts required the last four physical GPUs. Keep that
+    default for reproducibility when no device mask is provided, but allow users
+    to choose any valid HIP/CUDA visible-device list explicitly.
+    """
+    hip_value = os.environ.get("HIP_VISIBLE_DEVICES")
+    cuda_value = os.environ.get("CUDA_VISIBLE_DEVICES")
+    visible_value = hip_value or cuda_value
+    expected = ",".join(str(device) for device in required)
+
+    if visible_value is None:
+        if not set_if_unset:
+            raise RuntimeError(f"HIP_VISIBLE_DEVICES must be set to {expected}")
+        os.environ["HIP_VISIBLE_DEVICES"] = expected
+        return expected
+
+    visible = _parse_visible_devices(visible_value)
+    if hip_value is not None and cuda_value is not None and hip_value != cuda_value:
+        raise RuntimeError(
+            "HIP_VISIBLE_DEVICES and CUDA_VISIBLE_DEVICES disagree; "
+            f"got HIP_VISIBLE_DEVICES={hip_value!r}, CUDA_VISIBLE_DEVICES={cuda_value!r}"
+        )
+    visible = ",".join(str(device) for device in visible)
+    os.environ["HIP_VISIBLE_DEVICES"] = visible
+    return visible
 
 
 def main() -> None:

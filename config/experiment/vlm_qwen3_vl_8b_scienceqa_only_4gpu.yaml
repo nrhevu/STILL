@@ -1,0 +1,7 @@
+extends: ./vlm_qwen3_vl_8b_scienceqa_4gpu.yaml
+output_dir: checkpoints/vlm_qwen3_vl_8b_scienceqa_only_4gpu
+
+gates:
+  - summary_file: outputs/vlm/qwen3_vl_8b/scienceqa_smoke_full.json
+    min_rows: 256
+    min_full_accuracy: 0.75

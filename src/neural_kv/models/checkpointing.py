@@ -29,6 +29,7 @@ def legacy_compactor_config(checkpoint: dict[str, Any]) -> dict[str, Any]:
         "beta_init": float(checkpoint.get("beta_init", 0.0)),
         "layer_compactor_groups": int(checkpoint.get("layer_compactor_groups", 0)),
         "head_specific_latents": bool(checkpoint.get("head_specific_latents", False)),
+        "rope_mode": str(checkpoint.get("rope_mode", "default")),
     }
 
 

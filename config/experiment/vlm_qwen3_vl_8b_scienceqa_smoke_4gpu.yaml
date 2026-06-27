@@ -1,0 +1,13 @@
+extends: ./vlm_qwen3_vl_8b_scienceqa_only_4gpu.yaml
+output_dir: checkpoints/vlm_qwen3_vl_8b_scienceqa_smoke_4gpu
+
+trainer:
+  val_check_interval: 10
+
+training:
+  steps: 20
+  save_every: 10
+
+data:
+  limit_train: 80
+  limit_validation: 16

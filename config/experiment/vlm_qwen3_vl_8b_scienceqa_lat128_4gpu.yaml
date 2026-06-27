@@ -1,0 +1,60 @@
+extends: ../base.yaml
+seed: 7
+output_dir: checkpoints/vlm_qwen3_vl_8b_scienceqa_lat128_4gpu
+
+runtime:
+  dtype: bfloat16
+  model_load_device: auto
+  max_storage: 10TB
+
+trainer:
+  accelerator: gpu
+  devices: 4
+  strategy: ddp
+  precision: bf16-mixed
+  log_every_n_steps: 1
+  val_check_interval: 100
+
+model:
+  name: Qwen/Qwen3-VL-8B-Instruct
+  context_length: 8192
+  compactor:
+    num_latents: 128
+    num_blocks: 2
+    latent_dropout: 0.0
+    beta_base: zero
+    layer_compactor_groups: 0
+    sink_tokens: 8
+    exact_tokens: 128
+    exact_strategy: kv_norm
+    exact_beta: 0.0
+    head_specific_latents: false
+    rope_mode: none
+
+training:
+  steps: 1200
+  batch_size: 1
+  learning_rate: 5.0e-6
+  gradient_clip_val: 1.0
+  kl_weight: 1.0
+  ce_weight: 1.0
+  balanced_answer_sampling: false
+  save_every: 100
+
+data:
+  train_file: data/vlm_scienceqa/train.jsonl
+  validation_file: data/vlm_scienceqa/validation.jsonl
+  limit_train: null
+  limit_validation: 128
+  num_workers: 0
+
+gates:
+  - summary_file: outputs/vlm/qwen3_vl_8b/scienceqa_smoke_full.json
+    min_rows: 256
+    min_full_accuracy: 0.75
+  - summary_file: outputs/vlm/qwen3_vl_8b/mmmu_smoke_full.json
+    min_rows: 150
+    min_full_accuracy: 0.60
+  - summary_file: outputs/vlm/qwen3_vl_8b/mmmu_validation_generation_qwen_mmmu_lmms_cli.json
+    min_rows: 847
+    min_full_accuracy: 0.55
